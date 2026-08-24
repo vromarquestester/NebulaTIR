@@ -11,6 +11,24 @@ htmlcov/
 .coverage
 .coverage.*
 
+# ─── Estado de execução, gerado na própria pasta ─────────────────────
+# "drivers/" é SEMEADA por services/drivers.py a cada corrida (chamada em
+# execucao.py), copiando do venv do TIR. Não é empacotada pelo .spec e depende
+# da versão do navegador instalado NAQUELA máquina — versionar fixaria o driver
+# de uma máquina para todas, que é exatamente o problema que aquele módulo
+# existe para resolver. São 19 MB de binário que o histórico guardaria para
+# sempre, num repositório cujo código inteiro tem 2,5 MB.
+#
+# Atualizar driver é largar o arquivo novo na pasta: operação de máquina,
+# não commit.
+drivers/
+
+# As corridas do TIR escrevem em <pasta do programa>/tests/<AMBIENTE>/<ROTINA>
+# (services/preparacao.py). Em desenvolvimento a pasta do programa é a raiz do
+# repositório, então os artefatos caem dentro da MESMA pasta da suíte pytest.
+# A regra pega as subpastas de execução sem tocar nos arquivos de teste.
+tests/*/
+
 # ─── Build / distribuição ────────────────────────────────────────────
 build/
 dist/
