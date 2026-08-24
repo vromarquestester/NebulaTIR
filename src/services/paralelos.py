@@ -99,10 +99,15 @@ def gerar(*, origem: str, banco_origem: str, quantidade: int,
         slot = registro.proximo_slot(origem)
         ambiente = nome_paralelo(origem, slot)
         banco = nome_banco_paralelo(banco_origem, slot)
-        # O slot 1 do plano é o ambiente principal; os paralelos pegam dos
-        # seguintes, que já vêm com as portas deslocadas.
-        portas_do_slot = (instancias_plano[indice]["portas"]
-                          if indice < len(instancias_plano) else {})
+        # O slot 1 do plano é o ambiente PAI, que participa da corrida. Os
+        # clones pegam do segundo em diante — daí o `+ 1`.
+        #
+        # Sem o deslocamento, o primeiro clone nascia com a porta do pai. Não
+        # colidia enquanto o pai era parado antes de executar; passou a colidir
+        # quando ele virou uma das instâncias.
+        slot_no_plano = indice + 1
+        portas_do_slot = (instancias_plano[slot_no_plano]["portas"]
+                          if slot_no_plano < len(instancias_plano) else {})
         porta_webapp = portas_do_slot.get("webapp") or mod_portas.BASES["webapp"]
 
         log.info("[PARALELO] Clonando %s → %s (porta %s)…",

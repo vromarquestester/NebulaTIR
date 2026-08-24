@@ -115,11 +115,18 @@ def test_clone_pede_a_pasta_das_instancias_e_o_temp_do_pai(reg):
     assert ger.clonagens[0]["reaproveitar_temp"] is True
 
 
-def test_portas_vem_do_plano(reg):
+def test_portas_vem_do_plano_pulando_a_do_pai(reg):
+    """O slot 1 do plano é do ambiente PAI, que participa da corrida — os
+    clones começam no segundo.
+
+    Antes o primeiro clone nascia com a porta do pai. Não colidia enquanto o
+    pai era parado antes de executar; passou a colidir quando ele virou uma
+    das instâncias."""
     ger = GerenciadorFalso()
     paralelos.gerar(origem="A", banco_origem="B", quantidade=2,
-                    estado_gerenciador=ger, registro=reg, plano_portas=_plano(2))
-    assert [c["port"] for c in ger.clonagens] == ["4321", "4322"]
+                    estado_gerenciador=ger, registro=reg, plano_portas=_plano(3))
+    assert [c["port"] for c in ger.clonagens] == ["4322", "4323"]
+    assert "4321" not in [c["port"] for c in ger.clonagens]
 
 
 def test_reaproveita_os_que_ja_existem(reg):
