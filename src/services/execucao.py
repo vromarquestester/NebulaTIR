@@ -120,6 +120,17 @@ class Execucao:
                 "log": "", "png": "", "mensagem": "",
                 "dividida": len(unidades) > 1,
                 "partes": len(unidades),
+                # Resultado por caso, consolidado POR ROTINA.
+                #
+                # A árvore por instância (`_instancias`) não serve para isto:
+                # `_slot_assume` zera a lista de casos quando a instância pega
+                # a próxima rotina, e o que já rodou some da tela. Serve para
+                # acompanhar ao vivo, não para guardar.
+                #
+                # Aqui o resultado fica onde ninguém o sobrescreve, e vale
+                # também para rotina dividida: as fatias rodam em instâncias
+                # diferentes e escrevem no mesmo mapa.
+                "resultados": {},
             }
 
     # ── leitura ──
@@ -139,7 +150,11 @@ class Execucao:
 
     def instantaneo(self) -> dict:
         with self._lock:
-            itens = [dict(v) for v in self._situacao.values()]
+            # `resultados` é copiado à parte: `dict(v)` é raso, e devolver a
+            # referência deixaria o JS lendo um dicionário que as threads da
+            # corrida ainda estão escrevendo.
+            itens = [{**v, "resultados": dict(v.get("resultados") or {})}
+                     for v in self._situacao.values()]
             arvore = [{**v, "casos": [dict(c) for c in v["casos"]]}
                       for v in self._instancias.values()]
         return {
@@ -241,18 +256,28 @@ class Execucao:
                 # dividida, lista de casos desatualizada no disco).
                 entrada["casos"].append({"nome": caso, "estado": estado})
 
+            # Cópia que sobrevive à troca de rotina da instância.
+            situacao = self._situacao.get(entrada.get("rotina") or "")
+            if situacao is not None:
+                situacao["resultados"][caso] = estado
+
     def _slot_libera(self, slot: int) -> None:
         with self._lock:
             entrada = self._instancias.get(slot)
             if entrada is None:
                 return
+            rotina = entrada.get("rotina") or ""
             entrada["caso"] = ""
             entrada["estado"] = "ocioso"
             # Caso que ficou "rodando" quando o lançador morreu no meio não
             # pode ficar girando para sempre na tela.
+            final = ABORTADO if self._parar.is_set() else FALHOU
+            situacao = self._situacao.get(rotina)
             for item in entrada["casos"]:
                 if item["estado"] == RODANDO:
-                    item["estado"] = ABORTADO if self._parar.is_set() else FALHOU
+                    item["estado"] = final
+                    if situacao is not None:
+                        situacao["resultados"][item["nome"]] = final
 
     def ambiente_do_slot(self, slot: int) -> str:
         """Ambiente que o trabalhador `slot` usa (1-based)."""

@@ -907,6 +907,8 @@ body.sem-link .chip-link { animation: halo 2400ms var(--ease-out) infinite; }
 .arvore-rotina .contagem {
   margin-left: auto;
   font-size: 11px;
+  min-width: 3.2ch;
+  text-align: center;
   padding: 1px var(--sp-2);
   border-radius: 999px;
   background: hsl(var(--primary-soft));
@@ -1158,6 +1160,14 @@ body.sem-link .chip-link { animation: halo 2400ms var(--ease-out) infinite; }
 }
 /* Contraído, a linha divisória não separa nada — só suja a barra. */
 .panel-log[data-aberto="false"] .panel-head { border-bottom-color: transparent; }
+
+/* Contraído, o console SAI do fluxo.
+   `overflow: hidden` no painel não bastava: o `.console` é `flex: 1` e
+   preenchia a folga entre a altura da barra e os 52px do painel, deixando meia
+   linha de log aparecendo por baixo. Escondê-lo não interrompe nada — as
+   linhas continuam sendo anexadas ao elemento, e reaparecem inteiras ao
+   abrir. */
+.panel-log[data-aberto="false"] .console { display: none; }
 
 /* A barra é o alvo de clique inteiro, e o conteúdo fica centrado nela. O
    `.panel-head` padrão tem recuo maior embaixo, o que jogava o texto para a
@@ -1568,4 +1578,222 @@ label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
   }
   /* Cor e opacidade continuam sendo feedback — só o movimento some. */
   .btn:active:not(:disabled), .icon-btn:active { transform: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Abas do "Ambiente selecionado"
+
+   A configuração é o que se ajusta antes de rodar; os casos de teste são o
+   que se acompanha durante. Numa coluna só, a seleção ficava no fim de uma
+   rolagem longa e sumia justamente enquanto a corrida acontecia.
+   ═══════════════════════════════════════════════════════════ */
+
+.abas {
+  display: flex;
+  gap: var(--sp-1);
+  border-bottom: 1px solid hsl(var(--border));
+  margin-bottom: var(--sp-4);
+}
+
+.aba {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: hsl(var(--fg-faint));
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: .02em;
+  cursor: pointer;
+  transition: color .15s var(--ease-out), border-color .15s var(--ease-out);
+}
+.aba:hover { color: hsl(var(--fg-muted)); }
+.aba:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
+
+.aba[aria-selected="true"] {
+  color: hsl(var(--fg));
+  border-bottom-color: hsl(var(--primary));
+  font-weight: 700;
+}
+
+/* Quantas rotinas estão confirmadas. Sem isto, trocar para a aba é a única
+   forma de saber se há seleção — e a resposta costuma ser "nenhuma". */
+.aba-badge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: hsl(var(--surface-3));
+  color: hsl(var(--fg-muted));
+  font-size: 11px;
+  line-height: 17px;
+  text-align: center;
+}
+.aba[aria-selected="true"] .aba-badge {
+  background: hsl(var(--primary-soft));
+  color: hsl(var(--fg));
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Resultado na árvore de seleção
+
+   Mesmo vocabulário da árvore de execução, de propósito: `--accent` para o
+   que está rodando, `--ok` para quem passou, `--danger` para quem falhou.
+   Duas janelas com cores diferentes para o mesmo estado seriam duas verdades.
+   ═══════════════════════════════════════════════════════════ */
+
+.arvore-rotina > summary .marca {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+  margin-right: var(--sp-1);
+}
+
+.arvore-rotina[data-estado="rodando"] > summary { color: hsl(var(--fg)); }
+.arvore-rotina[data-estado="rodando"] > summary .marca {
+  color: hsl(var(--accent));
+  animation: pulso-caso 1.8s var(--ease-out) infinite;
+}
+.arvore-rotina[data-estado="rodando"] { border-color: hsl(var(--accent) / .5); }
+
+.arvore-rotina[data-estado="ok"] > summary .marca { color: hsl(var(--ok)); }
+.arvore-rotina[data-estado="ok"] { border-color: hsl(var(--ok) / .4); }
+
+/* A rotina inteira fica vermelha quando qualquer caso falha — a regra é da
+   equipe, e é a mesma que o backend aplica ao fechar a rotina. */
+.arvore-rotina[data-estado="erro"] > summary { color: hsl(var(--danger)); }
+.arvore-rotina[data-estado="erro"] > summary .marca { color: hsl(var(--danger)); }
+.arvore-rotina[data-estado="erro"] { border-color: hsl(var(--danger) / .5); }
+
+.arvore-rotina[data-estado="abortado"] > summary .marca { color: hsl(var(--warn)); }
+
+.arvore-casos li {
+  display: grid;
+  grid-template-columns: 1.2em 1fr;
+  align-items: baseline;
+  gap: var(--sp-2);
+  color: hsl(var(--fg-faint));
+}
+.arvore-casos .marca { text-align: center; }
+.arvore-casos li[data-estado="rodando"] { color: hsl(var(--fg)); font-weight: 700; }
+.arvore-casos li[data-estado="rodando"] .marca {
+  color: hsl(var(--accent));
+  animation: pulso-caso 1.8s var(--ease-out) infinite;
+}
+.arvore-casos li[data-estado="ok"] { color: hsl(var(--fg-muted)); }
+.arvore-casos li[data-estado="ok"] .marca { color: hsl(var(--ok)); }
+.arvore-casos li[data-estado="erro"] { color: hsl(var(--danger)); }
+.arvore-casos li[data-estado="erro"] .marca { color: hsl(var(--danger)); }
+.arvore-casos li[data-estado="abortado"] .marca { color: hsl(var(--warn)); }
+
+/* ── Evidência e log da rotina concluída ────────────────── */
+
+.arvore-rotina > summary .artefatos {
+  display: inline-flex;
+  gap: var(--sp-1);
+  margin-left: auto;
+}
+
+.btn-artefato {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--sp-2);
+  border: 1px solid hsl(var(--border-strong));
+  border-radius: var(--r-sm);
+  background: hsl(var(--surface-3));
+  color: hsl(var(--fg-muted));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color .15s var(--ease-out), color .15s var(--ease-out);
+}
+.btn-artefato:hover {
+  border-color: hsl(var(--primary));
+  color: hsl(var(--fg));
+}
+.btn-artefato:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
+}
+
+/* Numa coluna estreita o rótulo sai e sobra o ícone, que o `title` explica.
+   Some o texto, não o botão: perder a evidência seria perder a função. */
+@media (max-width: 1100px) {
+  .btn-artefato .rotulo { display: none; }
+}
+
+/* ── Ajustes da aba de casos de teste ──────────────────── */
+
+/* Cabeçalho do card com ação à direita. */
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+/* Discreto até ser procurado: apagar resultado é ação rara, e um botão
+   vermelho chapado ao lado do título competiria com o Executar TIR. */
+.btn-limpar-resultado {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: hsl(var(--danger) / .75);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color .15s var(--ease-out), border-color .15s var(--ease-out),
+              background-color .15s var(--ease-out);
+}
+.btn-limpar-resultado:hover {
+  color: hsl(var(--danger));
+  border-color: hsl(var(--danger) / .5);
+  background: hsl(var(--danger) / .10);
+}
+.btn-limpar-resultado:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
+}
+
+.arvore-acoes {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* A área dos artefatos tem largura fixa mesmo vazia.
+   Sem isso, `.contagem` (margin-left: auto) parava num x diferente em cada
+   rotina — a que já tinha Evidência e Log empurrava a bolinha para a
+   esquerda, e a lista ficava com as contagens desalinhadas na vertical. Cada
+   `<details>` é um bloco independente, então não há grid comum para resolver
+   isso; reservar a coluna é o que alinha. */
+.arvore-rotina > summary .artefatos {
+  flex: 0 0 var(--larg-artefatos, 172px);
+  justify-content: flex-end;
+}
+
+@media (max-width: 1100px) {
+  .arvore-rotina > summary .artefatos { --larg-artefatos: 78px; }
+}
+
+/* ── Abas fixas no topo do painel central ──────────────── */
+
+/* Rolar a configuração não pode levar as abas junto: com 150 casos na lista,
+   voltar para "Configurações" viraria uma rolagem de volta ao topo. */
+.abas {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: hsl(var(--surface));
+  /* O card que passa por baixo encostava no texto da aba. */
+  padding-top: var(--sp-1);
 }

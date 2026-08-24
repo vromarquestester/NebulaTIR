@@ -195,3 +195,166 @@ def test_toda_funcao_chamada_no_app_existe():
     chamadas = set(re.findall(r"\b(render[A-Z][\w$]*)\s*\(", JS))
     assert chamadas <= declaradas, \
         f"chamada sem declaração: {sorted(chamadas - declaradas)}"
+
+# ── Abas do "Ambiente selecionado" ──────────────────────────
+
+def test_abas_existem_e_apontam_para_os_paineis():
+    ids = _ids_do_html()
+    assert {"aba-config", "aba-casos", "painel-config", "painel-casos"} <= ids
+    assert 'aria-controls="painel-config"' in HTML
+    assert 'aria-controls="painel-casos"' in HTML
+
+
+def test_so_uma_aba_comeca_selecionada():
+    """Duas selecionadas deixam os dois painéis visíveis e a rolagem dobrada."""
+    assert HTML.count('aria-selected="true"') >= 1
+    assert re.search(r'id="aba-config"[^>]*aria-selected="true"', HTML, re.S)
+    assert re.search(r'id="aba-casos"[^>]*aria-selected="false"', HTML, re.S)
+
+
+def test_painel_de_casos_comeca_escondido():
+    assert re.search(r'id="painel-casos"[^>]*hidden', HTML, re.S)
+
+
+def test_selecao_de_testes_esta_dentro_da_aba_de_casos():
+    """O card inteiro mudou de lugar; ficar fora da aba o faria aparecer nas
+    duas, ou em nenhuma."""
+    inicio = HTML.index('id="painel-casos"')
+    fim = HTML.index("/painel-casos")
+    trecho = HTML[inicio:fim]
+    for elemento in ("combo-testes", "btn-confirmar-testes", "arvore-testes"):
+        assert elemento in trecho, f"{elemento} ficou fora da aba de casos"
+
+
+def test_cards_de_configuracao_ficaram_na_outra_aba():
+    inicio = HTML.index('id="painel-config"')
+    fim = HTML.index("/painel-config")
+    trecho = HTML[inicio:fim]
+    for elemento in ("tit-modo", "tabela-portas", "tit-banco", "tit-rpo"):
+        assert elemento in trecho, f"{elemento} saiu da aba de configurações"
+
+
+def test_tablist_tem_navegacao_por_seta():
+    """Padrão de tablist: Tab entra no grupo, seta anda entre as abas."""
+    assert "ArrowRight" in JS and "ArrowLeft" in JS
+    assert 'role="tablist"' in HTML
+
+
+# ── Resultado por caso na aba ───────────────────────────────
+
+def test_arvore_de_selecao_marca_estado_por_caso():
+    """Cinza/verde/vermelho/azul saem do `data-estado`, como na árvore de
+    execução — e o CSS precisa ter a regra para cada um."""
+    for estado in ("rodando", "ok", "erro"):
+        assert f'.arvore-casos li[data-estado="{estado}"]' in CSS
+
+
+def test_rotina_inteira_muda_de_cor():
+    for estado in ("rodando", "ok", "erro"):
+        assert f'.arvore-rotina[data-estado="{estado}"]' in CSS
+
+
+def test_estado_nao_vai_so_na_cor():
+    """Quem não distingue verde de vermelho precisa ler o mesmo. A árvore usa
+    marca (símbolo) e `title`."""
+    assert "TITULO_CASO[estadoCaso]" in JS
+    assert "MARCA_CASO[estadoCaso]" in JS
+
+
+def test_erro_de_um_caso_pinta_a_rotina_toda():
+    """Regra da equipe: uma suite com um caso falho é uma suite vermelha."""
+    assert "resultados.includes('erro')" in JS
+
+
+def test_caso_sem_resultado_e_tratado_como_fila():
+    """Ausente do mapa é 'não executado', nunca 'passou'."""
+    assert "resultados[caso] || 'fila'" in JS
+
+
+# ── Evidência e log ─────────────────────────────────────────
+
+def test_artefatos_so_aparecem_com_a_rotina_terminada():
+    """Durante a corrida o relatório ainda está sendo escrito; abrir um png
+    pela metade mostra um resultado que não é o final."""
+    assert "['ok', 'erro', 'abortado'].includes(situacao.estado)" in JS
+
+
+def test_botao_de_artefato_nao_nasce_sem_caminho():
+    """Rotina que não gerou relatório não ganha botão morto."""
+    assert "if (!caminho) return null;" in JS
+
+
+def test_abrir_artefato_nao_recolhe_a_rotina():
+    """O clique no summary alterna o `details`; sem parar a propagação, ver a
+    evidência fecharia a lista de casos junto."""
+    assert "ev.stopPropagation();" in JS
+
+
+def test_artefato_usa_a_api_que_valida_o_caminho():
+    assert "api.abrir_arquivo(caminho)" in JS
+
+# ── Ajustes pedidos depois do primeiro uso ──────────────────
+
+def test_log_contraido_esconde_o_console():
+    """`overflow: hidden` não bastava: o console é `flex: 1` e preenchia a
+    folga entre a barra e os 52px do painel, deixando meia linha à mostra."""
+    assert '.panel-log[data-aberto="false"] .console' in CSS
+    assert re.search(r'\.panel-log\[data-aberto="false"\] \.console \{[^}]*display:\s*none',
+                     CSS)
+
+
+def test_abas_ficam_fixas_no_topo():
+    """Com 150 casos na lista, voltar para Configurações viraria uma rolagem
+    de volta ao topo."""
+    assert re.search(r'\.abas \{[^}]*position:\s*sticky', CSS, re.S)
+
+
+def test_area_de_artefatos_tem_largura_reservada():
+    """Sem isso a contagem parava num x diferente em cada rotina: a que tinha
+    Evidência e Log empurrava a bolinha para a esquerda."""
+    assert re.search(r'\.artefatos \{[^}]*flex:\s*0 0 var\(--larg-artefatos',
+                     CSS, re.S)
+
+
+def test_painel_de_execucao_nao_lista_mais_rotina_por_rotina():
+    """O resultado por rotina passou a viver só na aba de casos de teste —
+    duas listas do mesmo dado divergem, e a de lá é a completa."""
+    assert "ver relatório" not in JS          # o botão antigo do painel
+    # O título some fora da fase do Gerenciador, e a lista não recebe rotinas.
+    assert "#exec-fases-titulo').hidden = true;" in JS
+    assert "#exec-fases').innerHTML = '';" in JS
+
+
+def test_exec_fases_continua_servindo_ao_gerenciador():
+    """O elemento fica: é ele que mostra a clonagem e a restauração."""
+    assert "exec-fases" in JS
+    assert "Preparando o ambiente" in JS
+
+
+def test_botoes_de_expandir_e_contrair_existem():
+    ids = _ids_do_html()
+    assert {"btn-expandir-tudo", "btn-contrair-tudo", "arvore-acoes"} <= ids
+    assert "abrirTodasAsRotinas" in JS
+
+
+def test_botao_de_limpar_resultados_existe():
+    ids = _ids_do_html()
+    assert "btn-limpar-resultado" in ids
+    assert "api.limpar_execucao()" in JS
+
+
+def test_limpar_nasce_escondido():
+    """Só aparece quando há resultado para descartar."""
+    assert re.search(r'id="btn-limpar-resultado"[^>]*hidden', HTML, re.S)
+
+
+def test_limpar_some_durante_a_corrida():
+    """Descartar o resultado no meio deixaria a tela mentindo sobre o que roda."""
+    assert "state.execucao.ativa === true" in JS
+
+
+def test_instancias_sao_redesenhadas_durante_a_corrida():
+    """A bolinha de AppServer/DbAccess ficava parada no estado antigo: o
+    render só acontecia ao trocar de ambiente."""
+    trecho = JS[JS.index("if (linkMudou) await renderDetalhes();"):]
+    assert "renderParalelos()" in trecho[:900]

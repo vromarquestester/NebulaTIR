@@ -120,6 +120,26 @@
         </p>
 
         <div id="detail-body" hidden>
+          <!-- ── Abas do ambiente selecionado ──
+               A configuração é o que se ajusta antes de rodar; os casos de
+               teste são o que se acompanha durante. Numa coluna só, a seleção
+               de casos ficava no fim de uma rolagem longa, e durante a corrida
+               era preciso rolar até lá para ver o que passou. -->
+          <div class="abas" role="tablist" aria-label="Ambiente selecionado">
+            <button type="button" class="aba" id="aba-config" role="tab"
+                    aria-selected="true" aria-controls="painel-config">
+              Configurações
+            </button>
+            <button type="button" class="aba" id="aba-casos" role="tab"
+                    aria-selected="false" aria-controls="painel-casos"
+                    tabindex="-1">
+              Casos de teste
+              <span class="aba-badge" id="aba-casos-badge" hidden></span>
+            </button>
+          </div>
+
+          <div id="painel-config" role="tabpanel" aria-labelledby="aba-config"
+               tabindex="0">
           <!-- ── Modo de execução ── -->
           <section class="card" aria-labelledby="tit-modo">
             <h3 id="tit-modo">Modo de execução</h3>
@@ -289,9 +309,24 @@
             <p class="form-error" id="rpo-erro" hidden></p>
           </section>
 
+          </div><!-- /painel-config -->
+
+          <div id="painel-casos" role="tabpanel" aria-labelledby="aba-casos"
+               tabindex="0" hidden>
           <!-- ── Seleção de testes ── -->
           <section class="card" aria-labelledby="tit-testes">
-            <h3 id="tit-testes">Casos de teste</h3>
+            <div class="card-head">
+              <h3 id="tit-testes">Casos de teste</h3>
+              <!-- Descarta o resultado da corrida anterior para a mesma
+                   seleção poder rodar de novo do zero. Não mexe na seleção
+                   nem apaga arquivo: só a cor volta a cinza. -->
+              <button type="button" class="btn-limpar-resultado"
+                      id="btn-limpar-resultado" hidden
+                      title="Limpar resultados e permitir executar de novo">
+                <span aria-hidden="true">🗑</span>
+                <span class="sr-only">Limpar resultados</span>
+              </button>
+            </div>
             <p class="hint" id="testes-origem">—</p>
 
             <div class="selecao-linha">
@@ -319,12 +354,23 @@
               </button>
             </div>
 
+            <!-- Rotina com 150 casos torna abrir e fechar uma a uma inviável. -->
+            <div class="arvore-acoes" id="arvore-acoes" hidden>
+              <button type="button" class="btn btn-sm btn-ghost" id="btn-expandir-tudo">
+                <span aria-hidden="true">▾</span> Expandir tudo
+              </button>
+              <button type="button" class="btn btn-sm btn-ghost" id="btn-contrair-tudo">
+                <span aria-hidden="true">▸</span> Contrair tudo
+              </button>
+            </div>
+
             <div class="arvore" id="arvore-testes"></div>
             <p class="empty-state" id="arvore-vazia">
               Nenhuma rotina confirmada.<br>
               <span class="muted">Escolha as rotinas acima e clique em Confirmar.</span>
             </p>
           </section>
+          </div><!-- /painel-casos -->
         </div>
       </div>
 

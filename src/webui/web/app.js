@@ -29,6 +29,7 @@ const state = {
   preferencias: {},        // globais: modo, limite, raiz dos testes
   buscaTestes: '',
   selecaoTestes: new Set(),
+  abaAtiva: '#aba-config',           // aba do painel "Ambiente selecionado"
   execucao: { ativa: false, rotinas: [] },
   paralelosDesmarcados: new Set(),   // padrão é tudo marcado
   andamento: {},                     // fase em curso no Gerenciador
@@ -542,43 +543,207 @@ function abrirCombo(abrir) {
   if (abrir) $('#busca-testes').focus();
 }
 
+/* ── Abas do ambiente selecionado ───────────────────────── */
+
+const ABAS = [
+  { aba: '#aba-config', painel: '#painel-config' },
+  { aba: '#aba-casos',  painel: '#painel-casos'  },
+];
+
+function trocarAba(alvo, focar = true) {
+  for (const { aba, painel } of ABAS) {
+    const ativa = aba === alvo;
+    const botao = $(aba);
+    botao.setAttribute('aria-selected', String(ativa));
+    // Só a aba ativa fica no Tab: a seta é quem anda entre elas, que é o
+    // padrão de tablist e evita o Tab passar por painel escondido.
+    botao.tabIndex = ativa ? 0 : -1;
+    $(painel).hidden = !ativa;
+    if (ativa && focar) botao.focus();
+  }
+  state.abaAtiva = alvo;
+}
+
+function ligarAbas() {
+  for (const { aba } of ABAS) {
+    $(aba).addEventListener('click', () => trocarAba(aba, false));
+  }
+  $('.abas').addEventListener('keydown', ev => {
+    const passo = ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0;
+    if (!passo) return;
+    ev.preventDefault();
+    const atual = ABAS.findIndex(a => a.aba === state.abaAtiva);
+    trocarAba(ABAS[(atual + passo + ABAS.length) % ABAS.length].aba);
+  });
+}
+
 /* ── Árvore da seleção confirmada ──────────────────────── */
+
+/* Resultado por rotina da corrida atual, indexado pelo nome.
+
+   Vem de `estado_execucao`, não da seleção: a seleção diz o que foi escolhido,
+   a execução diz como foi. Enquanto não houver corrida o mapa é vazio e tudo
+   fica cinza — que é o certo, "não executado". */
+function situacaoDaCorrida() {
+  const mapa = new Map();
+  for (const r of (state.execucao && state.execucao.rotinas) || []) {
+    mapa.set(r.rotina, r);
+  }
+  return mapa;
+}
+
+/* Estado da rotina para efeito de cor.
+
+   `erro` vence: uma suite com um caso falho é uma suite vermelha, mesmo que os
+   outros vinte tenham passado. Foi a regra pedida, e é a mesma que o backend
+   já aplica ao fechar a rotina. */
+function estadoDaRotina(situacao) {
+  if (!situacao) return 'fila';
+  if (['ok', 'erro', 'abortado'].includes(situacao.estado)) return situacao.estado;
+  const resultados = Object.values(situacao.resultados || {});
+  if (resultados.includes('erro')) return 'erro';
+  if (situacao.estado === 'rodando') return 'rodando';
+  return 'fila';
+}
+
+/* Botão que abre um artefato da rotina. Só existe quando há caminho: rotina
+   que não chegou a gerar relatório não ganha botão morto. */
+function botaoArtefato(caminho, rotulo, simbolo, titulo) {
+  if (!caminho) return null;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn-artefato';
+  b.title = titulo;
+  const marca = document.createElement('span');
+  marca.setAttribute('aria-hidden', 'true');
+  marca.textContent = simbolo;
+  const texto = document.createElement('span');
+  texto.className = 'rotulo';
+  texto.textContent = rotulo;
+  b.append(marca, texto);
+  b.addEventListener('click', async ev => {
+    // O summary abre e fecha o details no clique; sem isto, ver a evidência
+    // recolhe a rotina junto.
+    ev.preventDefault();
+    ev.stopPropagation();
+    const r = await api.abrir_arquivo(caminho);
+    if (!r.ok) {
+      escreverLinha({ level: 'ERROR',
+                      text: `[EVIDÊNCIA] ${r.erro || 'não foi possível abrir'}: ${caminho}` });
+    }
+  });
+  return b;
+}
 
 async function renderArvore() {
   const r = await api.get_selecao(state.selecionado);
   const caixa = $('#arvore-testes');
   caixa.innerHTML = '';
+  const badge = $('#aba-casos-badge');
   if (!r.ok || !r.arvore.length) {
     $('#arvore-vazia').hidden = false;
+    badge.hidden = true;
+    $('#arvore-acoes').hidden = true;
+    $('#btn-limpar-resultado').hidden = true;
     return;
   }
   $('#arvore-vazia').hidden = true;
+  badge.hidden = false;
+  badge.textContent = r.arvore.length;
+  $('#arvore-acoes').hidden = false;
+
+  const situacoes = situacaoDaCorrida();
+  const temResultado = [...situacoes.values()].some(
+    s => ['ok', 'erro', 'abortado'].includes(s.estado));
+  $('#btn-limpar-resultado').hidden = !temResultado || state.execucao.ativa === true;
 
   for (const rotina of r.arvore) {
+    const situacao = situacoes.get(rotina.rotina);
+    const estado = estadoDaRotina(situacao);
+    const resultados = (situacao && situacao.resultados) || {};
+
     const bloco = document.createElement('details');
     bloco.className = 'arvore-rotina';
     bloco.dataset.ausente = String(rotina.ausente);
-    // Contraída: com várias rotinas confirmadas, tudo aberto vira uma parede
-    // de casos e esconde a própria lista de rotinas.
-    bloco.open = false;
-    bloco.innerHTML = `<summary>
-        <span class="nome"></span>
-        <span class="modulo"></span>
-        <span class="contagem"></span>
-      </summary><ul class="arvore-casos"></ul>`;
-    $('.nome', bloco).textContent = rotina.rotina;
-    $('.modulo', bloco).textContent = rotina.ausente
-      ? 'não encontrada no disco' : rotina.modulo;
-    $('.contagem', bloco).textContent = rotina.casos.length;
+    bloco.dataset.estado = estado;
+    // Contraída, exceto a que está rodando: durante a corrida, ter que abrir a
+    // rotina para ver onde ela está anula o motivo de a cor existir.
+    bloco.open = estado === 'rodando';
 
-    const casos = $('.arvore-casos', bloco);
+    const resumo = document.createElement('summary');
+    // Estado nunca vai só na cor — quem não distingue verde de vermelho lê o
+    // mesmo no title, como já acontece na árvore de execução.
+    resumo.title = `${rotina.rotina}: ${TITULO_CASO[estado] || estado}`;
+    for (const [classe, valor] of [
+      ['marca', MARCA_CASO[estado] || '·'],
+      ['nome', rotina.rotina],
+      ['modulo', rotina.ausente ? 'não encontrada no disco' : rotina.modulo],
+      ['contagem', String(rotina.casos.length)],
+    ]) {
+      const span = document.createElement('span');
+      span.className = classe;
+      if (classe === 'marca') span.setAttribute('aria-hidden', 'true');
+      span.textContent = valor;
+      resumo.appendChild(span);
+    }
+
+    // Os artefatos existem quando a rotina TERMINOU: durante a corrida o
+    // relatório ainda está sendo escrito, e abrir um png pela metade mostra um
+    // resultado que não é o final.
+    const artefatos = document.createElement('span');
+    artefatos.className = 'artefatos';
+    if (situacao && ['ok', 'erro', 'abortado'].includes(situacao.estado)) {
+      // A imagem mostra QUE falhou; o log mostra POR QUE.
+      const evidencia = botaoArtefato(situacao.png, 'Evidência', '\u{1F5BC}',
+                                      'Abrir o relatório em imagem');
+      const registro = botaoArtefato(situacao.log, 'Log', '\u{1F4C4}',
+                                     'Abrir o log da execução');
+      if (evidencia) artefatos.appendChild(evidencia);
+      if (registro) artefatos.appendChild(registro);
+    }
+    resumo.appendChild(artefatos);
+    bloco.appendChild(resumo);
+
+    const casos = document.createElement('ul');
+    casos.className = 'arvore-casos';
     for (const caso of rotina.casos) {
       const li = document.createElement('li');
-      li.textContent = caso;
+      const estadoCaso = resultados[caso] || 'fila';
+      li.dataset.estado = estadoCaso;
+      li.title = `${caso}: ${TITULO_CASO[estadoCaso] || estadoCaso}`;
+      const marca = document.createElement('span');
+      marca.className = 'marca';
+      marca.setAttribute('aria-hidden', 'true');
+      marca.textContent = MARCA_CASO[estadoCaso] || '·';
+      const texto = document.createElement('span');
+      texto.className = 'texto';
+      texto.textContent = caso;
+      li.append(marca, texto);
       casos.appendChild(li);
     }
+    bloco.appendChild(casos);
     caixa.appendChild(bloco);
   }
+}
+
+function abrirTodasAsRotinas(abrir) {
+  for (const bloco of $$('#arvore-testes .arvore-rotina')) bloco.open = abrir;
+}
+
+/* Descarta o resultado da corrida anterior.
+
+   Não mexe na seleção nem apaga arquivo nenhum: o que sai é a memória do que
+   já rodou, para a mesma seleção poder ser executada de novo. Sem isto, a
+   única forma de voltar tudo a cinza era reconfirmar a seleção. */
+async function limparResultados() {
+  const r = await api.limpar_execucao();
+  if (!r.ok) {
+    escreverLinha({ level: 'WARNING', text: `[LIMPAR] ${r.erro || 'não foi possível limpar'}` });
+    return;
+  }
+  state.execucao = { ativa: false, rotinas: [] };
+  renderExecucao();
+  await renderArvore();
 }
 
 async function confirmarTestes() {
@@ -643,13 +808,32 @@ async function loopStatus() {
 
     if (linkMudou) await renderDetalhes();
 
+    // AppServer e DbAccess sobem e caem durante a corrida, e a bolinha de cada
+    // um só era redesenhada ao trocar de ambiente ou depois de uma ação — a
+    // instância ficava marcada como parada com o processo já no ar.
+    // Redesenhar enquanto algo acontece é o suficiente: fora disso o estado
+    // não muda sozinho.
+    if (state.selecionado
+        && (state.execucao.ativa === true || (state.andamento || {}).ativo)) {
+      await renderParalelos();
+    }
+
     // Andamento da corrida e liberação do botão vêm do backend, que conhece
     // todas as travas (VPN, SQL, seleção, execução já em curso).
+    const execucaoAnterior = JSON.stringify(state.execucao && state.execucao.rotinas);
     state.execucao = await api.estado_execucao();
     const liberado = await api.pode_executar(state.selecionado || '');
     state.podeExecutar = liberado.ok === true;
     state.motivoExecutar = liberado.motivo || '';
     renderExecucao();
+
+    // A aba "Casos de teste" mostra o mesmo resultado com outra lente, e
+    // precisa acompanhar. Só quando muda: redesenhar a cada 2 s fecharia o
+    // `details` que a pessoa abriu para olhar.
+    if (JSON.stringify(state.execucao.rotinas) !== execucaoAnterior
+        && state.selecionado) {
+      await renderArvore();
+    }
 
     atualizarBotoes();
   } catch (e) { /* janela fechando */ }
@@ -677,8 +861,6 @@ async function loopLogs() {
 }
 
 /* ── Painel de execução (coluna da direita) ────────────── */
-
-const MARCA_ESTADO = { fila: '·', rodando: '▸', ok: '✓', erro: '✕', abortado: '■' };
 
 /* Vocabulário da árvore ao vivo. O círculo vazio é "em execução": ele não
    preenche porque ainda não há resultado — só ✓ e ✕ afirmam alguma coisa.
@@ -751,6 +933,9 @@ function renderExecucao() {
     $('#exec-ambiente').textContent = andamento.ambiente || '';
     const lista = $('#exec-fases');
     lista.innerHTML = '';
+    const tituloFases = $('#exec-fases-titulo');
+    tituloFases.hidden = false;
+    tituloFases.textContent = 'Preparando o ambiente';
     const li = document.createElement('li');
     li.dataset.estado = andamento.estado === 'erro' ? 'erro'
       : andamento.estado === 'ok' ? 'ok' : 'ativo';
@@ -775,39 +960,14 @@ function renderExecucao() {
   modo.textContent = `${state.execucao.concluidas || 0}/${state.execucao.total || 0}`;
   $('#exec-ambiente').textContent = state.execucao.ambiente || '';
 
-  // O rótulo segue o que a lista realmente é naquele momento. Durante a
-  // corrida ela é a espera; no fim, o resultado de tudo que rodou.
-  const naFila = rotinas.filter(r => r.estado === 'fila').length;
-  const titulo = $('#exec-fases-titulo');
-  titulo.textContent = state.execucao.ativa === false
-    ? 'Resultado por rotina'
-    : naFila
-      ? `Rotinas na fila (${naFila})`
-      : 'Rotinas desta corrida';
-
-  const lista = $('#exec-fases');
-  lista.innerHTML = '';
-  for (const item of rotinas) {
-    const li = document.createElement('li');
-    li.dataset.estado = item.estado === 'rodando' ? 'ativo'
-      : item.estado === 'ok' ? 'ok'
-      : (item.estado === 'erro' || item.estado === 'abortado') ? 'erro' : '';
-    li.innerHTML = '<span class="marca" aria-hidden="true"></span><span class="texto"></span>';
-    $('.marca', li).textContent = MARCA_ESTADO[item.estado] || '·';
-    // O PNG é o relatório que a pessoa realmente olha: vira link quando existe.
-    const texto = $('.texto', li);
-    texto.textContent = item.rotina + (item.mensagem ? ` — ${item.mensagem}` : '');
-    if (item.png) {
-      const abrir = document.createElement('button');
-      abrir.type = 'button';
-      abrir.className = 'link';
-      abrir.textContent = 'ver relatório';
-      abrir.onclick = () => api.abrir_arquivo(item.png);
-      texto.appendChild(document.createTextNode(' '));
-      texto.appendChild(abrir);
-    }
-    lista.appendChild(li);
-  }
+  // O resultado por rotina — com evidência, log e os casos — vive na aba
+  // "Casos de teste". Ter a mesma lista aqui era duplicar o dado em duas
+  // telas, e a de lá é mais completa: esta só tinha o total.
+  //
+  // A `#exec-fases` continua no HTML porque é ela que mostra a fase do
+  // Gerenciador enquanto ele clona ou restaura, acima.
+  $('#exec-fases-titulo').hidden = true;
+  $('#exec-fases').innerHTML = '';
 
   const final = $('#exec-final');
   final.hidden = state.execucao.ativa !== false || !rotinas.length;
@@ -1320,6 +1480,12 @@ async function confirmarExcluir() {
 /* ── Eventos ───────────────────────────────────────────── */
 
 function ligarEventos() {
+  ligarAbas();
+
+  $('#btn-expandir-tudo').addEventListener('click', () => abrirTodasAsRotinas(true));
+  $('#btn-contrair-tudo').addEventListener('click', () => abrirTodasAsRotinas(false));
+  $('#btn-limpar-resultado').addEventListener('click', limparResultados);
+
   $('#btn-importar').addEventListener('click', abrirImportar);
   $('#btn-cancelar-importar').addEventListener('click', () => fecharModal('overlay-importar'));
   $('#btn-fechar-importar').addEventListener('click', () => fecharModal('overlay-importar'));

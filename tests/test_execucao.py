@@ -653,3 +653,99 @@ def test_duas_unidades_vao_para_instancias_diferentes(cenario, tmp_path):
     pasta = cenario / "tests" / "AMB" / "R1"
     assert sorted(p.name for p in pasta.glob("config.*.json")) == [
         "config.AMB_TIR1.json", "config.AMB_TIR2.json"]
+
+
+# ── Resultado por caso, consolidado por rotina ──────────────
+#
+# A árvore por instância zera os casos quando a instância pega a próxima
+# rotina. Estes testes cobrem o mapa que sobrevive a isso — é dele que a aba
+# "Casos de teste" tira a cor de cada linha.
+
+def _lancador_com_progresso(cenario, casos_e_resultados):
+    """Troca o lançador falso por um que anuncia início e fim de cada caso."""
+    from services import preparacao
+    marcas = "".join(
+        f"print('[nebula_caso] INICIO {c}')\n"
+        f"print('[nebula_caso] FIM {c} {r}')\n"
+        for c, r in casos_e_resultados)
+    alvo = preparacao.recurso("src", "services", "tir", "nebula_run.py")
+    alvo.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "alvo = (sys.argv[sys.argv.index('--config') + 1]\n"
+        "        if '--config' in sys.argv else 'config.json')\n"
+        "cfg = json.loads(Path(alvo).read_text(encoding='utf-8'))\n"
+        "pasta = Path(cfg['LogFolder'])\n"
+        "pasta.mkdir(parents=True, exist_ok=True)\n"
+        "(pasta / 'execucao.log').write_text('log', encoding='utf-8')\n"
+        "(pasta / 'relatorio.png').write_bytes(b'PNG')\n"
+        + marcas +
+        "sys.exit(1 if 'FALHA' in sys.argv[1] else 0)\n",
+        encoding="utf-8")
+
+
+def test_resultado_de_cada_caso_fica_na_rotina(cenario, tmp_path):
+    _lancador_com_progresso(cenario, [("test_1", "ok"), ("test_2", "erro")])
+    rotina = _rotina(tmp_path)
+    rotina["casos"] = ["test_1", "test_2"]
+    corrida, _ = _rodar([rotina])
+
+    resultados = corrida.instantaneo()["rotinas"][0]["resultados"]
+    assert resultados == {"test_1": "ok", "test_2": "erro"}
+
+
+def test_resultado_sobrevive_a_instancia_pegar_outra_rotina(cenario, tmp_path):
+    """O ponto todo do mapa. Sequencial, a mesma instância roda as duas: a
+    árvore dela só guarda a última, e a primeira não pode sumir da tela."""
+    _lancador_com_progresso(cenario, [("test_1", "ok")])
+    r1 = _rotina(tmp_path, "COMA222")
+    r2 = _rotina(tmp_path, "MATA143")
+    corrida, _ = _rodar([r1, r2])
+
+    por_rotina = {r["rotina"]: r["resultados"]
+                  for r in corrida.instantaneo()["rotinas"]}
+    assert por_rotina["COMA222"] == {"test_1": "ok"}
+    assert por_rotina["MATA143"] == {"test_1": "ok"}
+
+
+def test_rotina_comeca_sem_resultado_nenhum(cenario, tmp_path):
+    """Antes de rodar, todo caso é cinza — ausente do mapa, não 'ok'."""
+    corrida = execucao.Execucao(
+        ambiente="AMB", rotinas=[_rotina(tmp_path)], config=_config(),
+        estado_gerenciador=GerenciadorFalso(), fila_eventos=queue.Queue())
+    assert corrida.instantaneo()["rotinas"][0]["resultados"] == {}
+
+
+def test_instantaneo_nao_devolve_o_mapa_vivo(cenario, tmp_path):
+    """Cópia, não referência: as threads da corrida escrevem nesse dicionário
+    enquanto o JS o lê."""
+    corrida = execucao.Execucao(
+        ambiente="AMB", rotinas=[_rotina(tmp_path)], config=_config(),
+        estado_gerenciador=GerenciadorFalso(), fila_eventos=queue.Queue())
+    foto = corrida.instantaneo()["rotinas"][0]["resultados"]
+    foto["invadido"] = "erro"
+    assert corrida.instantaneo()["rotinas"][0]["resultados"] == {}
+
+
+def test_caso_preso_em_rodando_vira_falha_no_mapa(cenario, tmp_path):
+    """Lançador que morre no meio deixava o caso girando para sempre. O mapa
+    tem que fechar junto com a árvore."""
+    _lancador_com_progresso(cenario, [])
+    from services import preparacao
+    alvo = preparacao.recurso("src", "services", "tir", "nebula_run.py")
+    alvo.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "alvo = (sys.argv[sys.argv.index('--config') + 1]\n"
+        "        if '--config' in sys.argv else 'config.json')\n"
+        "cfg = json.loads(Path(alvo).read_text(encoding='utf-8'))\n"
+        "pasta = Path(cfg['LogFolder'])\n"
+        "pasta.mkdir(parents=True, exist_ok=True)\n"
+        "(pasta / 'execucao.log').write_text('log', encoding='utf-8')\n"
+        "print('[nebula_caso] INICIO test_1')\n"      # começa e nunca termina
+        "sys.exit(1)\n",
+        encoding="utf-8")
+    rotina = _rotina(tmp_path)
+    corrida, _ = _rodar([rotina])
+
+    assert corrida.instantaneo()["rotinas"][0]["resultados"]["test_1"] == "erro"
