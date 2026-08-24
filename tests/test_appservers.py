@@ -4,6 +4,7 @@ Quem sobe é o NebulaTIR e não o Gerenciador — só assim o PID fica registrad
 aqui, e só com o PID dá para parar uma instância sem derrubar as outras.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,7 +40,15 @@ def test_exe_inexistente_avisa(tmp_path):
 
 def test_processo_que_morre_na_partida_e_falha(tmp_path, monkeypatch):
     """Porta ocupada ou .ini inválido matam o AppServer em segundos; devolver
-    'ok' faria o erro aparecer lá na frente, longe da causa."""
+    'ok' faria o erro aparecer lá na frente, longe da causa.
+
+    A janela aqui é generosa de propósito, e não custa os 10 s: `subir` espera
+    **até** o limite, então volta assim que o script morre. Com os 0,2 s da
+    fixture o teste media o tempo de partida do interpretador, não o
+    comportamento — no runner do GitHub o processo ainda estava nascendo
+    quando a janela fechava, e o natimorto passava por vivo.
+    """
+    monkeypatch.setattr(appservers, "ESPERA_SUBIDA_SEG", 10.0)
     script = tmp_path / "morre.py"
     script.write_text("import sys; sys.exit(3)\n", encoding="utf-8")
     r = appservers.subir(sys.executable, str(script))
@@ -243,6 +252,11 @@ def test_appserver_sobe_com_console(tmp_path, monkeypatch):
         def poll(self):
             return None
 
+        def wait(self, timeout=None):
+            # Vivo: `subir` espera ate o limite e desiste. Mesmo contrato do
+            # Popen real, que levanta TimeoutExpired em vez de devolver.
+            raise subprocess.TimeoutExpired("duble", timeout)
+
     monkeypatch.setattr(appservers.subprocess, "Popen",
                         lambda cmd, **k: chamadas.append((cmd, k)) or ProcFalso())
     monkeypatch.setattr(appservers.time, "sleep", lambda s: None)
@@ -265,6 +279,11 @@ def test_dbaccess_sobe_com_console(tmp_path, monkeypatch):
 
         def poll(self):
             return None
+
+        def wait(self, timeout=None):
+            # Vivo: `subir` espera ate o limite e desiste. Mesmo contrato do
+            # Popen real, que levanta TimeoutExpired em vez de devolver.
+            raise subprocess.TimeoutExpired("duble", timeout)
 
     monkeypatch.setattr(appservers, "dbaccess_no_ar", lambda: False)
     monkeypatch.setattr(appservers.subprocess, "Popen",
@@ -301,6 +320,11 @@ class _ProcVivo:
 
     def poll(self):
         return None
+
+    def wait(self, timeout=None):
+        # Vivo: `subir` espera ate o limite e desiste. Mesmo contrato do
+        # Popen real, que levanta TimeoutExpired em vez de devolver.
+        raise subprocess.TimeoutExpired("duble", timeout)
 
 
 def test_sobe_um_dbaccess_na_porta_da_instancia(tmp_path, monkeypatch):

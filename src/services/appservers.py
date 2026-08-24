@@ -62,6 +62,25 @@ ESPERA_DBACCESS_SEG = 45.0
 INTERVALO_SONDA_SEG = 1.0
 
 
+def morreu_na_partida(proc: subprocess.Popen,
+                      limite_seg: float | None = None) -> bool:
+    """O processo encerrou dentro da janela de partida?
+
+    Espera **até** o limite em vez de dormir cego e olhar depois: quem morre é
+    detectado no instante em que morre, e quem sobrevive à janela é dado como
+    no ar. Dormir o tempo cheio atrasava toda subida bem-sucedida em
+    `ESPERA_SUBIDA_SEG`, e — pior — amarrava a deteção ao tempo de partida do
+    binário. Numa máquina lenta o processo ainda estava nascendo quando a
+    janela fechava, e um processo natimorto passava por vivo.
+    """
+    limite = ESPERA_SUBIDA_SEG if limite_seg is None else limite_seg
+    try:
+        proc.wait(timeout=limite)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
 def porta_responde(porta: int, host: str = "127.0.0.1",
                    timeout: float = 1.0) -> bool:
     """Aceita conexão? É o que o navegador do TIR vai tentar."""
@@ -116,8 +135,7 @@ def subir(appserver_exe: str, params: str = "") -> dict:
 
     # Morrer no primeiro segundo é o sintoma de porta ocupada ou .ini inválido;
     # devolver "ok" nesse caso faria o teste falhar lá na frente, longe da causa.
-    time.sleep(ESPERA_SUBIDA_SEG)
-    if proc.poll() is not None:
+    if morreu_na_partida(proc):
         return {"ok": False,
                 "erro": f"O AppServer encerrou logo após subir "
                         f"(código {proc.returncode}). Porta ocupada ou "
@@ -184,8 +202,7 @@ def garantir_dbaccess(dbaccess_exe: str, params: str = "",
     except OSError as e:
         return {"ok": False, "erro": f"Falha ao iniciar o DbAccess: {e}"}
 
-    time.sleep(ESPERA_SUBIDA_SEG)
-    if proc.poll() is not None:
+    if morreu_na_partida(proc):
         return {"ok": False,
                 "erro": f"O DbAccess encerrou logo após subir "
                         f"(código {proc.returncode})."}
@@ -230,8 +247,7 @@ def subir_dbaccess_da_instancia(dbaccess_exe: str, porta: int,
     except OSError as e:
         return {"ok": False, "erro": f"Falha ao iniciar o DbAccess: {e}"}
 
-    time.sleep(ESPERA_SUBIDA_SEG)
-    if proc.poll() is not None:
+    if morreu_na_partida(proc):
         return {"ok": False,
                 "erro": f"O DbAccess da instância encerrou logo após subir "
                         f"(código {proc.returncode}). Porta {porta} ocupada?"}
