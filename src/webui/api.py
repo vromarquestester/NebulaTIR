@@ -84,6 +84,10 @@ class Api:
         self._window = None
         self._execucao = None       # corrida em andamento, se houver
         self._pid_principal = 0     # AppServer do ambiente principal, se subimos
+        # O ambiente principal foi subido por NÓS? Só o que subimos é nosso
+        # para derrubar. Reiniciar um AppServer que já atendia era o que fazia
+        # Gerenciador e NebulaTIR perderem a noção de quem está no ar.
+        self._principal_e_nosso = True
         # Exclusão de paralelos: roda em thread e a UI acompanha por polling.
         self._exclusao = {"ativa": False, "atual": "", "feitos": 0,
                           "total": 0, "removidos": [], "erros": []}
@@ -141,6 +145,25 @@ class Api:
             info.setdefault("estado", "stopped")
             info["existe_no_gerenciador"] = bool(banco)
             info["port"] = banco.get("port", "")
+
+            # ── Estado EFETIVO, não estado declarado ──
+            #
+            # O Gerenciador responde `running` só quando ele mesmo é o pai do
+            # processo (`process_registry.status`, que guarda o Popen em
+            # memória). Um AppServer subido pelo NebulaTIR — ou pelo próprio
+            # Gerenciador antes de ser reaberto — fica invisível para ele, e a
+            # bolinha aqui mostrava "parado" com o ambiente atendendo.
+            #
+            # A porta responder é observável e não tem dono: vale para quem
+            # quer que tenha subido, e sobrevive ao reinício dos dois lados.
+            info["porta_responde"] = self._porta_no_ar(info["port"])
+            # `fonte_estado` vai sempre: quem lê precisa saber se o "no ar" veio
+            # do Gerenciador (há handle, dá para parar por lá) ou da porta (o
+            # processo é de outro dono).
+            info["fonte_estado"] = "gerenciador"
+            if info["porta_responde"] and info["estado"] != "running":
+                info["estado"] = "running"
+                info["fonte_estado"] = "porta"
             ambientes[nome] = info
 
         return {
@@ -164,6 +187,21 @@ class Api:
             "importados": self._importados.nomes,
             "ambientes": ambientes,
         }
+
+    def _porta_no_ar(self, porta) -> bool:
+        """A porta do ambiente aceita conexão?
+
+        Timeout curto de propósito: isto roda para cada ambiente importado a
+        cada ciclo de status (2 s). Em loopback, quem vai responder responde em
+        milissegundos; esperar mais só atrasaria a tela quando ninguém atende.
+        """
+        try:
+            numero = int(str(porta).strip())
+        except (TypeError, ValueError):
+            return False
+        if not numero:
+            return False
+        return appservers.porta_responde(numero, timeout=0.2)
 
     def poll_logs(self, limite: int = 200) -> list:
         """Drena a fila de logs (não bloqueia)."""
@@ -410,15 +448,36 @@ class Api:
         if erro:
             return {"ok": False, "erro": erro}
 
-        # O Gerenciador segura um ambiente com AppServer e DbAccess próprios.
-        # Sem derrubar isso, as portas e o DbAccess colidem com os nossos.
-        self._fila.put({"kind": "log", "level": "INFO",
-                        "text": "[FASE] Liberando o ambiente do Gerenciador"})
-        parada = self._estado.parar_ambiente(nome)
-        if not parada.get("ok"):
-            self._fila.put({"kind": "log", "level": "WARNING",
-                            "text": f"Não consegui parar {nome} pelo "
-                                    f"Gerenciador: {parada.get('erro', '')}"})
+        # ── Ambiente que já atende é reaproveitado, não derrubado ──
+        #
+        # Derrubar e subir de novo era o padrão, e criava o buraco: o
+        # Gerenciador descarta o handle ao parar, o processo novo é filho do
+        # NebulaTIR, e daí em diante NENHUM dos dois reconhece o ambiente — ele
+        # fica no ar e os dois dizem "parado".
+        #
+        # Quem subiu, derruba. Se a porta já responde, o ambiente é de outro
+        # dono: usamos como está e não o encerramos no fim.
+        banco_principal = self._estado.banco_por_nome(nome) or {}
+        porta_principal = banco_principal.get("port", "")
+        self._principal_e_nosso = not self._porta_no_ar(porta_principal)
+
+        if self._principal_e_nosso:
+            # O Gerenciador segura um ambiente com AppServer e DbAccess
+            # próprios. Sem derrubar isso, as portas e o DbAccess colidem com
+            # os nossos.
+            self._fila.put({"kind": "log", "level": "INFO",
+                            "text": "[FASE] Liberando o ambiente do Gerenciador"})
+            parada = self._estado.parar_ambiente(nome)
+            if not parada.get("ok"):
+                self._fila.put({"kind": "log", "level": "WARNING",
+                                "text": f"Não consegui parar {nome} pelo "
+                                        f"Gerenciador: {parada.get('erro', '')}"})
+        else:
+            self._fila.put({
+                "kind": "log", "level": "INFO",
+                "text": f"{nome} já está no ar na porta {porta_principal} — "
+                        f"reaproveitando em vez de reiniciar.",
+            })
 
         ambientes_por_slot = [nome]
         config_por_ambiente = {}
@@ -588,10 +647,15 @@ class Api:
         return por_ambiente
 
     def _preparar_paralelos(self, nome: str) -> dict:
-        """Sobe o AppServer de cada paralelo já gerado e devolve a lista.
+        """Sobe os ambientes da corrida e devolve a lista, o PAI incluído.
+
+        O pai é a primeira instância. Ele já existe, já tem banco e já tem
+        porta: deixá-lo parado enquanto três clones rodavam desperdiçava um
+        ambiente pronto e vários GB de disco. Pedir 3 instâncias agora significa
+        o pai mais 2 clones.
 
         Não gera ambiente aqui: gerar é ação explícita do usuário, pelo botão.
-        Executar em paralelo sem paralelo pronto é erro, não motivo para clonar
+        Executar em paralelo sem clone nenhum é erro, não motivo para clonar
         gigabytes sem avisar.
         """
         registrados = self._instancias.listar(nome)
@@ -647,6 +711,25 @@ class Api:
                     "erro": "Nenhuma instância paralela subiu. Veja o log."}
 
         ambientes = [s["ambiente"] for s in subida["subidos"]]
+
+        # O pai entra como PRIMEIRA instância. Ele foi parado logo antes, junto
+        # com o AppServer do Gerenciador, então precisa subir de novo — pelo
+        # NebulaTIR desta vez, que é quem sabe o PID e consegue derrubá-lo
+        # depois sem tocar nas outras instâncias.
+        principal = self._subir_principal(nome)
+        if principal.get("ok"):
+            ambientes.insert(0, nome)
+        else:
+            # Sem o pai a corrida continua — com uma instância a menos, e
+            # dizendo isso em voz alta. Derrubar tudo porque o ambiente
+            # original não subiu seria pior: os clones estão prontos.
+            self._fila.put({
+                "kind": "log", "level": "WARNING",
+                "text": f"ATENÇÃO: {nome} (ambiente principal) não subiu — "
+                        f"{principal.get('erro', '')}. A corrida segue só com "
+                        f"as instâncias paralelas.",
+            })
+
         self._fila.put({"kind": "log", "level": "INFO",
                         "text": f"{len(ambientes)} instância(s) no ar: "
                                 f"{', '.join(ambientes)}"})
@@ -678,6 +761,24 @@ class Api:
         if self._execucao is None:
             return {"ok": True, "ativa": False, "rotinas": []}
         return {"ok": True, **self._execucao.instantaneo()}
+
+    def limpar_execucao(self) -> dict:
+        """Descarta o resultado da corrida anterior.
+
+        Não apaga arquivo nenhum: log e PNG continuam no disco, e a seleção de
+        rotinas continua onde está. O que sai é a memória de que aquilo já
+        rodou — é o que devolve os casos ao cinza e libera a mesma seleção para
+        rodar de novo.
+
+        **Corrida em andamento não é descartada.** Soltar a referência com
+        threads vivas escreveria numa `Execucao` que a tela não mostra mais: o
+        resultado sumiria da interface enquanto o TIR continua rodando.
+        """
+        if self._execucao is not None and self._execucao.ativa:
+            return {"ok": False,
+                    "erro": "Há uma execução em andamento. Aborte antes de limpar."}
+        self._execucao = None
+        return {"ok": True}
 
     # ─────────────────────────────────────────────────────────
     # AMBIENTES PARALELOS
@@ -806,18 +907,29 @@ class Api:
             return {"ok": False, "erro": "O Gerenciador está ocupado."}
 
         banco = self._estado.banco_por_nome(nome) or {}
-        quantidade = self._prefs.max_instancias
+        # O ambiente PAI é uma das instâncias — ele já existe, já tem banco e
+        # já tem porta. Pedir 3 instâncias significa clonar 2.
+        #
+        # Antes clonava 3 e deixava o pai parado, ocioso: uma cópia de vários
+        # GB a mais no disco, e um ambiente pronto sem uso.
+        clones = max(0, self._prefs.max_instancias - 1)
         plano = self.plano_de_portas(nome)
         if not plano.get("ok"):
             return plano
+        if not clones:
+            return {"ok": True, "criados": [], "reaproveitados": [],
+                    "mensagem": "Uma instância só: o próprio ambiente já "
+                                "atende, nada a clonar.",
+                    "quantidade_pedida": self._prefs.max_instancias}
 
         resultado = paralelos.gerar(
             origem=nome, banco_origem=banco.get("nome_banco", nome),
-            quantidade=quantidade, estado_gerenciador=self._estado,
+            quantidade=clones, estado_gerenciador=self._estado,
             registro=self._instancias, plano_portas=plano,
             existentes=self._instancias.nomes(nome),
             caminhos_de=self._caminhos_da_instancia)
-        return {**resultado, "quantidade_pedida": quantidade}
+        return {**resultado, "quantidade_pedida": self._prefs.max_instancias,
+                "clones_pedidos": clones}
 
     def subir_paralelos(self, ambientes: list) -> dict:
         """Sobe DbAccess e AppServer das instâncias pedidas, e espera as portas.

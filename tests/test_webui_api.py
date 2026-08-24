@@ -552,3 +552,55 @@ def test_salvar_com_poui_desligado_nao_desliga(api):
     r = api.salvar_configuracao("PAR_2510", {**base, "POUILogin": False})
     assert r["ok"] is True
     assert r["config"]["POUILogin"] is True
+
+# ── Limpar resultados ───────────────────────────────────────
+
+def test_limpar_execucao_zera_o_resultado(api):
+    api._execucao = None
+    assert api.limpar_execucao() == {"ok": True}
+    assert api.estado_execucao()["rotinas"] == []
+
+
+def test_limpar_recusa_com_corrida_em_andamento(api):
+    """Soltar a referência com threads vivas faria o resultado sumir da tela
+    enquanto o TIR continua rodando."""
+    class Viva:
+        ativa = True
+        def instantaneo(self):
+            return {"ativa": True, "rotinas": []}
+
+    api._execucao = Viva()
+    r = api.limpar_execucao()
+    assert r["ok"] is False
+    assert "andamento" in r["erro"]
+    assert api._execucao is not None
+
+# ── Estado efetivo do ambiente ──────────────────────────────
+#
+# O Gerenciador só responde `running` quando ELE é o pai do processo. Um
+# AppServer subido pelo NebulaTIR ficava invisível para os dois lados: no ar,
+# e ambos dizendo "parado".
+
+def test_porta_que_responde_marca_o_ambiente_como_no_ar(api, monkeypatch):
+    api.importar_ambiente("PAR_2510")
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: True)
+    ambientes = api.get_status()["ambientes"]
+    assert ambientes, "o teste precisa de ao menos um ambiente importado"
+    for info in ambientes.values():
+        assert info["estado"] == "running"
+        assert info["porta_responde"] is True
+
+
+def test_sem_porta_respondendo_o_estado_do_gerenciador_vale(api, monkeypatch):
+    api.importar_ambiente("PAR_2510")
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: False)
+    for info in api.get_status()["ambientes"].values():
+        assert info["porta_responde"] is False
+        # Sem porta respondendo, quem manda é o Gerenciador.
+        assert info["fonte_estado"] == "gerenciador"
+
+
+@pytest.mark.parametrize("valor", ["", None, "abc", 0, "0", "  "])
+def test_porta_invalida_nao_explode(api, valor):
+    """`port` vem do Gerenciador e pode chegar vazio ou sujo."""
+    assert api._porta_no_ar(valor) is False
