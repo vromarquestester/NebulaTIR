@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NebulaTIR</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <a class="skip-link" href="#painel-detalhes">Pular para os detalhes do ambiente</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <!-- Marca inline: o app precisa abrir offline, sem nenhum recurso externo. -->
+      <svg class="brand-logo" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+        <circle cx="12" cy="12" r="4.6" fill="currentColor"/>
+        <ellipse cx="12" cy="12" rx="10.4" ry="4.4" fill="none"
+                 stroke="currentColor" stroke-width="1.3" opacity=".75"
+                 transform="rotate(-24 12 12)"/>
+      </svg>
+      <h1>Nebula<span class="brand-tir">TIR</span></h1>
+      <span class="brand-version" id="app-version" data-numeric>—</span>
+    </div>
+
+    <div class="topbar-status">
+      <!-- O chip do link vem primeiro: é o gate mestre da aplicação. -->
+      <p class="status-chip chip-link" id="chip-link" data-state="unknown">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="chip-link-text">Gerenciador: verificando…</span>
+      </p>
+      <p class="status-chip" id="chip-vpn" data-state="unknown">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="chip-vpn-text">VPN: —</span>
+      </p>
+      <p class="status-chip" id="chip-sql" data-state="unknown">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="chip-sql-text">SQL: —</span>
+      </p>
+    </div>
+
+    <div class="topbar-actions">
+      <span class="field-inline">Conexão</span>
+      <!-- Espelho somente-leitura: quem troca a conexão é o Gerenciador. -->
+      <span class="conexao-espelho mono" id="conexao-ativa" title="Definida no Gerenciador de Ambientes">—</span>
+      <span class="badge" id="badge-op" hidden></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ───────────── Ambientes importados ───────────── -->
+    <aside class="panel panel-list" aria-labelledby="tit-ambientes">
+      <div class="panel-head">
+        <h2 id="tit-ambientes">Ambientes</h2>
+        <span class="badge" id="badge-count" data-numeric>0</span>
+      </div>
+
+      <ul class="env-list" id="env-list" role="listbox" aria-labelledby="tit-ambientes" tabindex="0"></ul>
+
+      <p class="empty-state" id="env-empty" hidden>
+        Nenhum ambiente importado.<br>
+        <span class="muted">Use <strong>Importar ambiente</strong> para trazer um
+        ambiente do Gerenciador.</span>
+      </p>
+
+      <div class="crud-grid">
+        <button type="button" class="btn" id="btn-importar">
+          <span aria-hidden="true">⭳</span> Importar
+        </button>
+        <button type="button" class="btn" id="btn-sincronizar">
+          <span aria-hidden="true">⟳</span> Sincronizar
+        </button>
+        <button type="button" class="btn" id="btn-configuracao">
+          <span aria-hidden="true">⚙</span> Configuração
+        </button>
+        <button type="button" class="btn btn-danger-ghost" id="btn-excluir">
+          <span aria-hidden="true">🗑</span> Excluir
+        </button>
+      </div>
+    </aside>
+
+    <!-- ───────────── Detalhes + ações ───────────── -->
+    <section class="panel panel-detail" id="painel-detalhes" aria-labelledby="tit-detalhes" tabindex="-1">
+      <div class="panel-head">
+        <h2 id="tit-detalhes">Ambiente selecionado</h2>
+        <span class="mono muted" id="detalhe-ambiente">—</span>
+      </div>
+
+      <!-- Fixos no topo, fora da área de rolagem: o painel de log sobe por
+           cima do rodapé e cobria os botões quando expandido. -->
+      <div class="acoes-topo" role="group" aria-label="Execução do TIR">
+        <button type="button" class="btn btn-run" id="btn-executar-tir" disabled>
+          <span aria-hidden="true">▶</span> Executar TIR
+        </button>
+        <button type="button" class="btn btn-danger-ghost" id="btn-abortar-tir" disabled>
+          <span aria-hidden="true">■</span> Abortar teste
+        </button>
+      </div>
+
+      <div class="detail-scroll" id="detail-scroll">
+        <!-- Gate mestre: sem o Gerenciador aberto, nada é liberado. -->
+        <section class="onboarding" id="gate" hidden aria-labelledby="tit-gate">
+          <p class="onboarding-step">Dependência</p>
+          <h3 id="tit-gate">Abra o Gerenciador de Ambientes</h3>
+          <p class="onboarding-msg" id="gate-msg">
+            O NebulaTIR é um braço do Gerenciador de Ambientes e usa as funções
+            dele — cadastro, clonagem, <code class="mono">appserver.ini</code>,
+            portas e VPN. Enquanto ele não estiver aberto, as ações ficam
+            bloqueadas.
+          </p>
+          <ol class="onboarding-list">
+            <li>Abra o Gerenciador de Ambientes e aguarde a janela carregar.</li>
+            <li>A conexão volta sozinha em até 2 segundos — não precisa recarregar aqui.</li>
+          </ol>
+        </section>
+
+        <p class="empty-state" id="detail-empty">
+          Selecione um ambiente à esquerda para ver a configuração completa.
+        </p>
+
+        <div id="detail-body" hidden>
+          <!-- ── Modo de execução ── -->
+          <section class="card" aria-labelledby="tit-modo">
+            <h3 id="tit-modo">Modo de execução</h3>
+            <div class="modo-grid">
+              <div class="segmentado" role="radiogroup" aria-labelledby="tit-modo">
+                <button type="button" class="seg" id="modo-sequencial"
+                        role="radio" aria-checked="true" data-modo="sequencial">
+                  Sequencial
+                </button>
+                <button type="button" class="seg" id="modo-paralelo"
+                        role="radio" aria-checked="false" data-modo="paralelo">
+                  Paralelo
+                </button>
+              </div>
+
+              <!-- Segunda linha, só em paralelo: em sequencial nem o número
+                   nem a divisão mudam alguma coisa. -->
+              <div class="modo-campos" id="modo-campos" hidden>
+                <div class="campo">
+                  <label for="max-instancias">Instâncias em paralelo</label>
+                  <input class="input" type="number" id="max-instancias"
+                         min="1" value="3" data-numeric>
+                </div>
+
+                <div class="campo">
+                  <label class="check" for="chk-dividir-casos">
+                    <input type="checkbox" id="chk-dividir-casos">
+                    Dividir casos entre instâncias
+                  </label>
+                  <p class="hint">
+                    Distribui os casos de uma rotina em vez de mandar o suite
+                    inteiro para uma instância. Casos que dependem de outro
+                    ficam juntos, na mesma instância e na ordem do suite.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p class="hint" id="modo-explicacao"></p>
+          </section>
+
+          <!-- ── Portas ── -->
+          <section class="card" aria-labelledby="tit-portas">
+            <h3 id="tit-portas">Portas por instância</h3>
+            <div class="tabela-rolagem">
+              <table class="tabela-portas" id="tabela-portas">
+                <thead><tr id="portas-cabecalho"></tr></thead>
+                <tbody id="portas-corpo"></tbody>
+              </table>
+            </div>
+            <p class="hint" id="portas-fixas"></p>
+            <p class="form-error" id="portas-erro" hidden></p>
+          </section>
+
+          <!-- ── Ambientes paralelos ── -->
+          <section class="card" id="card-paralelos" aria-labelledby="tit-paralelos" hidden>
+            <h3 id="tit-paralelos">Ambientes paralelos</h3>
+
+            <div class="paralelos-acoes">
+              <button type="button" class="btn btn-sm" id="btn-gerar-paralelos">
+                <span aria-hidden="true">⧉</span> Gerar paralelos
+              </button>
+              <button type="button" class="btn btn-sm" id="btn-subir-todos">
+                <span aria-hidden="true">⚡</span> Subir todos
+              </button>
+              <button type="button" class="btn btn-sm" id="btn-subir-selecionados">
+                <span aria-hidden="true">⚡</span> Subir selecionados
+              </button>
+              <button type="button" class="btn btn-sm" id="btn-parar-paralelos">
+                <span aria-hidden="true">■</span> Parar selecionados
+              </button>
+              <button type="button" class="btn btn-sm btn-danger-ghost" id="btn-excluir-paralelos">
+                <span aria-hidden="true">🗑</span> Excluir paralelos
+              </button>
+            </div>
+
+            <label class="check check-todos" for="chk-todos-paralelos">
+              <input type="checkbox" id="chk-todos-paralelos" checked>
+              Selecionar todos
+            </label>
+
+            <!-- Feedback da exclusão: cada remoção leva minutos, e sem isso a
+                 tela parece congelada. -->
+            <p class="aviso-exclusao" id="aviso-exclusao" hidden aria-live="polite"></p>
+
+            <ul class="lista-paralelos" id="lista-paralelos"></ul>
+            <p class="empty-state" id="paralelos-vazio">
+              Nenhum ambiente paralelo ainda.<br>
+              <span class="muted">Use <strong>Gerar paralelos</strong> para clonar
+              o ambiente e distribuir as portas.</span>
+            </p>
+            <p class="form-error" id="paralelos-erro" hidden></p>
+          </section>
+
+          <!-- ── Instâncias no disco ──
+               Fora do gate de modo, ao contrário do cartão acima: instância
+               cujo ambiente-pai sumiu não aparece em lista nenhuma, e é
+               justamente a que ocupa dezenas de GB à toa. -->
+          <section class="card" id="card-inventario" aria-labelledby="tit-inventario">
+            <h3 id="tit-inventario">Instâncias no disco</h3>
+            <div class="paralelos-acoes">
+              <button type="button" class="btn btn-sm" id="btn-inventario">
+                <span aria-hidden="true">⟳</span> Conferir disco
+              </button>
+              <button type="button" class="btn btn-sm" id="btn-medir-inventario">
+                <span aria-hidden="true">⌗</span> Calcular espaço
+              </button>
+              <button type="button" class="btn btn-sm btn-danger-ghost"
+                      id="btn-limpar-inventario" disabled>
+                <span aria-hidden="true">🗑</span> Limpar selecionadas
+              </button>
+            </div>
+            <p class="aviso-exclusao" id="aviso-limpeza" hidden aria-live="polite"></p>
+            <p class="hint" id="inventario-hint">
+              Cruza o registro do NebulaTIR, o cadastro do Gerenciador e o que
+              existe no disco. <strong>Órfã só é declarada com o Gerenciador
+              aberto</strong> — cada instalação dele tem o próprio cadastro, e
+              apagar dezenas de GB por causa do cadastro errado não se desfaz.
+            </p>
+            <ul class="lista-inventario" id="lista-inventario"></ul>
+            <p class="empty-state" id="inventario-vazio" hidden>
+              Nenhuma instância no disco.
+            </p>
+            <p class="form-error" id="inventario-erro" hidden></p>
+          </section>
+
+          <!-- ── Banco de dados ── -->
+          <section class="card" aria-labelledby="tit-banco">
+            <h3 id="tit-banco">Banco de dados</h3>
+            <div class="paralelos-acoes">
+              <button type="button" class="btn btn-sm" id="btn-restaurar-banco">
+                <span aria-hidden="true">↺</span> Restaurar banco do ambiente
+              </button>
+              <button type="button" class="btn btn-sm" id="btn-restaurar-banco-paralelos">
+                <span aria-hidden="true">↺</span> Restaurar banco dos paralelos
+              </button>
+            </div>
+            <p class="hint">
+              Repõe a base congelada de cada ambiente, com o nome de banco dele.
+              <strong>Encerra todos os AppServer</strong> — o Gerenciador precisa
+              liberar os arquivos da base, e faz isso por nome de imagem. Só use
+              com a corrida parada.
+            </p>
+            <p class="form-error" id="banco-erro" hidden></p>
+          </section>
+
+          <!-- ── RPO ── -->
+          <section class="card" aria-labelledby="tit-rpo">
+            <h3 id="tit-rpo">RPO</h3>
+            <div class="paralelos-acoes">
+              <button type="button" class="btn btn-sm" id="btn-guardar-rpo">
+                <span aria-hidden="true">⭳</span> Guardar RPO atual
+              </button>
+              <button type="button" class="btn btn-sm" id="btn-rpo-ambiente">
+                <span aria-hidden="true">↺</span> Restaurar RPO do ambiente
+              </button>
+              <button type="button" class="btn btn-sm" id="btn-rpo-zerado">
+                <span aria-hidden="true">↺</span> Restaurar RPO zerado
+              </button>
+            </div>
+            <p class="hint" id="rpo-situacao"></p>
+            <p class="hint">
+              <strong>Do ambiente</strong> repõe o RPO com pacote e fonte aplicados —
+              exige ter guardado antes. <strong>Zerado</strong> repõe o RPO baixado,
+              apagando pacote e fonte, para comparar sem nada aplicado.
+            </p>
+            <p class="form-error" id="rpo-erro" hidden></p>
+          </section>
+
+          <!-- ── Seleção de testes ── -->
+          <section class="card" aria-labelledby="tit-testes">
+            <h3 id="tit-testes">Casos de teste</h3>
+            <p class="hint" id="testes-origem">—</p>
+
+            <div class="selecao-linha">
+              <div class="combo" id="combo-testes">
+                <button type="button" class="input combo-botao" id="btn-combo"
+                        aria-expanded="false" aria-haspopup="listbox"
+                        aria-controls="lista-testes">
+                  <span id="combo-resumo">Selecionar rotinas…</span>
+                  <span class="combo-seta" aria-hidden="true">▾</span>
+                </button>
+
+                <div class="combo-painel" id="combo-painel" hidden>
+                  <label class="sr-only" for="busca-testes">Buscar rotina ou módulo</label>
+                  <input class="input" id="busca-testes" type="search"
+                         placeholder="Buscar: 222, COMA, SIGAFIN…"
+                         autocomplete="off">
+                  <ul class="combo-lista" id="lista-testes" role="listbox"
+                      aria-multiselectable="true" aria-labelledby="tit-testes"></ul>
+                  <p class="empty-state" id="testes-vazio" hidden></p>
+                </div>
+              </div>
+
+              <button type="button" class="btn btn-primary" id="btn-confirmar-testes">
+                Confirmar
+              </button>
+            </div>
+
+            <div class="arvore" id="arvore-testes"></div>
+            <p class="empty-state" id="arvore-vazia">
+              Nenhuma rotina confirmada.<br>
+              <span class="muted">Escolha as rotinas acima e clique em Confirmar.</span>
+            </p>
+          </section>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ───────────── Painel de execução ───────────── -->
+    <aside class="panel panel-exec" aria-labelledby="tit-exec">
+      <div class="panel-head">
+        <h2 id="tit-exec">Execução</h2>
+        <span class="badge" id="exec-modo" hidden></span>
+      </div>
+
+      <div class="exec-scroll" id="exec-scroll" aria-live="polite">
+        <p class="empty-state" id="exec-empty">
+          Nenhuma execução em andamento.<br>
+          <span class="muted">O progresso de cada caso de teste aparece aqui.</span>
+        </p>
+
+        <div id="exec-body" hidden>
+          <p class="exec-ambiente" id="exec-ambiente"></p>
+          <!-- Árvore ao vivo: ambiente > rotina > caso. É onde se acompanha a
+               corrida; a lista de rotinas abaixo é o resultado consolidado. -->
+          <ul class="exec-arvore" id="exec-arvore" hidden></ul>
+          <!-- A lista de rotinas precisa de nome: solta embaixo da árvore ela
+               parece sobra de renderização, não a fila. O rótulo muda com o
+               estado da corrida (fila > resultado). -->
+          <h3 class="exec-subtitulo" id="exec-fases-titulo">Rotinas na fila</h3>
+          <ol class="exec-fases" id="exec-fases"></ol>
+          <p class="exec-final" id="exec-final" hidden></p>
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- ───────────── Console de log ─────────────
+       Sobreposição ancorada no rodapé: nasce contraído, mostrando só esta
+       barra, e sobe por cima do conteúdo quando aberto. Fica fora do
+       `.layout` justamente para não roubar altura dos três painéis. -->
+  <section class="panel panel-log" id="panel-log" data-aberto="false"
+           aria-labelledby="tit-log">
+    <!-- A barra inteira alterna o painel; o botão existe para o teclado. -->
+    <div class="panel-head" id="log-barra">
+      <h2 id="tit-log">
+        <button type="button" class="log-toggle" id="btn-log-toggle"
+                aria-expanded="false" aria-controls="console">
+          <span class="log-seta" aria-hidden="true">▴</span>
+          <span>Log</span>
+        </button>
+      </h2>
+      <div class="log-tools">
+        <label class="switch" id="campo-fixar" for="chk-fixar" hidden>
+          <input type="checkbox" id="chk-fixar">
+          Fixar
+        </label>
+        <label class="switch" for="chk-autoscroll">
+          <input type="checkbox" id="chk-autoscroll" checked>
+          Rolagem automática
+        </label>
+        <button type="button" class="btn btn-sm btn-ghost" id="btn-limpar-log">Limpar</button>
+      </div>
+    </div>
+    <div class="console" id="console" role="log" aria-live="polite" aria-label="Log do NebulaTIR"></div>
+  </section>
+
+  <!-- ───────────── Modal: importar ambiente ───────────── -->
+  <!-- ───────────── Modal: confirmar limpeza ─────────────
+       Apagar dezenas de GB não se desfaz. A confirmação lista, caminho a
+       caminho, exatamente o que vai sair. -->
+  <div class="overlay" id="overlay-limpeza" hidden>
+    <div class="modal modal-narrow" role="dialog" aria-modal="true" aria-labelledby="tit-modal-limpeza">
+      <div class="modal-head">
+        <h2 id="tit-modal-limpeza">Apagar do disco</h2>
+        <button type="button" class="icon-btn" id="btn-fechar-limpeza" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">
+          Isto <strong>não tem volta</strong>: encerra os processos, derruba o
+          banco no SQL Server (o <code>DROP</code> apaga o MDF/LDF), remove o
+          DSN e apaga as pastas abaixo.
+        </p>
+        <ul class="conn-list" id="lista-limpeza"></ul>
+        <p class="form-error" id="limpeza-erro" hidden></p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="btn-cancelar-limpeza">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="btn-confirmar-limpeza">Apagar de vez</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay-importar" hidden>
+    <div class="modal modal-narrow" role="dialog" aria-modal="true" aria-labelledby="tit-modal-importar">
+      <div class="modal-head">
+        <h2 id="tit-modal-importar">Importar ambiente</h2>
+        <button type="button" class="icon-btn" id="btn-fechar-importar" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint" id="importar-hint">
+          Ambientes cadastrados no Gerenciador que ainda não estão no NebulaTIR.
+        </p>
+        <ul class="conn-list" id="lista-disponiveis" role="listbox" aria-label="Ambientes disponíveis"></ul>
+        <p class="empty-state" id="importar-vazio" hidden>
+          Todos os ambientes do Gerenciador já foram importados.
+        </p>
+        <p class="form-error" id="importar-erro" hidden></p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="btn-cancelar-importar">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btn-confirmar-importar" disabled>Importar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────── Modal: configuração do TIR ───────────── -->
+  <div class="overlay" id="overlay-configuracao" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="tit-modal-config">
+      <div class="modal-head">
+        <h2 id="tit-modal-config">Configuração do TIR</h2>
+        <span class="badge mono" id="config-ambiente">—</span>
+        <button type="button" class="icon-btn" id="btn-fechar-config" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">
+          Gera o <code class="mono">config.json</code> da execução. Os nomes dos
+          campos aqui são em português; no arquivo, as chaves do TIR são mantidas.
+        </p>
+
+        <!-- Divergência com o Gerenciador: nunca sobrescreve calado. -->
+        <div class="aviso-divergencia" id="config-divergencia" hidden>
+          <p class="aviso-titulo">O Gerenciador mudou desde a importação</p>
+          <ul id="config-divergencia-lista"></ul>
+          <button type="button" class="btn btn-sm" id="btn-adotar-gerenciador">
+            Adotar os valores do Gerenciador
+          </button>
+        </div>
+
+        <form class="config-form" id="config-form" novalidate></form>
+        <p class="form-error" id="config-erro" hidden></p>
+
+        <!-- Divide a tela com a configuração do TIR, mas NÃO entra no
+             config.json: a pasta de fontes é da máquina, não do ambiente. -->
+        <section class="bloco-fontes" aria-labelledby="tit-fontes">
+          <h3 id="tit-fontes" class="grupo-titulo">Fontes dos testes</h3>
+          <div class="campo campo-largo">
+            <label for="raiz-testes">Pasta dos fontes do Protheus</label>
+            <div class="path-row">
+              <input class="input mono" id="raiz-testes"
+                     placeholder="Vazio: procurar automaticamente">
+              <button type="button" class="icon-btn" id="btn-raiz-pasta"
+                      aria-label="Escolher a pasta dos fontes">📁</button>
+              <button type="button" class="btn btn-sm btn-ghost" id="btn-raiz-detectar">
+                Detectar
+              </button>
+            </div>
+            <p class="hint" id="raiz-situacao"></p>
+            <p class="hint">
+              Preferência da máquina, compartilhando esta tela — não vai para o
+              <code class="mono">config.json</code>.
+            </p>
+          </div>
+        </section>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="btn-cancelar-config">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btn-salvar-config">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────── Modal: confirmar exclusão ───────────── -->
+  <div class="overlay" id="overlay-excluir" hidden>
+    <div class="modal modal-narrow" role="dialog" aria-modal="true" aria-labelledby="tit-modal-excluir">
+      <div class="modal-head">
+        <h2 id="tit-modal-excluir">Excluir do NebulaTIR</h2>
+        <button type="button" class="icon-btn" id="btn-fechar-excluir" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="alert-icon" aria-hidden="true">!</p>
+        <p class="alert-msg" id="excluir-msg"></p>
+        <p class="hint" style="text-align:center; margin-top:12px;">
+          O ambiente continua existindo no Gerenciador — some só daqui.
+        </p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="btn-cancelar-excluir">Cancelar</button>
+        <button type="button" class="btn btn-danger-ghost" id="btn-confirmar-excluir">Excluir</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

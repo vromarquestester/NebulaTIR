@@ -1,0 +1,1571 @@
+/* ============================================================
+   NebulaTIR — interface
+   Direção: a mesma do Gerenciador de Ambientes (terminal retro-futurista
+   sobre grafite), com a cor de marca deslocada para o violeta nebular.
+   As duas janelas ficam lado a lado o dia inteiro: precisam ser irmãs no
+   layout e distinguíveis num relance pela cor.
+   Tokens semânticos em HSL; nada de hex solto nos componentes.
+   ============================================================ */
+
+:root {
+  /* Superfícies — grafite com viés violeta, nunca preto puro */
+  --bg:            265 22% 5%;
+  --surface:       265 16% 8%;
+  --surface-2:     265 14% 11%;
+  --surface-3:     265 12% 15%;
+  --border:        265 12% 20%;
+  --border-strong: 265 14% 29%;
+
+  /* Texto */
+  --fg:        265 12% 93%;
+  --fg-muted:  265  9% 72%;
+  --fg-faint:  265  8% 56%;
+
+  /* Cor de marca: violeta. Um herói + um acento, o resto recua. */
+  --primary:      265 70% 62%;
+  --primary-fg:   265 40% 7%;
+  --primary-soft: 265 70% 62% / 0.16;
+  --accent:       186 88% 60%;
+
+  /* Semânticas de estado. `--ok` continua verde de propósito: "rodando"
+     não pode significar cores diferentes nas duas janelas. */
+  --warn:      42 96% 60%;
+  --danger:     4 82% 63%;
+  --danger-fg: 356 30% 8%;
+  --ok:        152 72% 50%;
+
+  --ring: 265 90% 72%;
+
+  /* Tipografia — mono em tudo; hierarquia por peso, caixa e tracking */
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+
+  /* Espaçamento 4/8 */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-6: 24px; --sp-8: 32px; --sp-12: 48px;
+
+  /* Raio concêntrico: externo = interno + padding */
+  --r-lg: 14px; --r-md: 10px; --r-sm: 6px;
+
+  /* Sombras em camadas, nunca uma sombra dura só */
+  --shadow-1: 0 1px 2px hsl(265 30% 2% / .5), 0 2px 6px hsl(265 30% 2% / .35);
+  --shadow-2: 0 2px 6px hsl(265 30% 2% / .5), 0 8px 24px hsl(265 30% 2% / .45);
+  --shadow-modal: 0 4px 12px hsl(265 30% 2% / .6), 0 24px 64px hsl(265 30% 2% / .7);
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* Altura única dos controles que dividem linha — campo ao lado de botão,
+     campo ao lado do segmentado. Simetria vale mais que a diferença de 4 px
+     que cada componente teria por conta própria. */
+  --altura-controle: 46px;
+
+  /* Log: altura da barra contraída e da sobreposição aberta. A aberta é a
+     mesma que o painel tinha quando dividia a grade. */
+  --log-topo: 52px;
+  --log-aberto: max(190px, 32vh);
+
+  --z-dropdown: 10;
+  --z-sticky: 20;
+  --z-overlay: 40;
+  --z-modal: 100;
+}
+
+/* ── Reset ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; }
+
+/* App é dark-only: avisa o motor de render para que scrollbars, seleção,
+   caret e widgets nativos nasçam escuros. */
+:root { color-scheme: dark; }
+
+* { scrollbar-color: hsl(var(--border-strong)) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: hsl(var(--surface-2)); border-radius: 999px; }
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border-strong));
+  border: 2px solid hsl(var(--surface-2));
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--primary) / .55); }
+::-webkit-scrollbar-corner { background: hsl(var(--surface-2)); }
+
+::selection { background: hsl(var(--primary) / .30); color: hsl(var(--fg)); }
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-size: 16px;
+}
+
+body {
+  min-height: 100vh;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.55;
+  color: hsl(var(--fg));
+  background:
+    radial-gradient(1200px 600px at 78% -10%, hsl(265 60% 30% / .20), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, hsl(186 70% 26% / .10), transparent 60%),
+    hsl(var(--bg));
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+h1, h2, h3, h4 { text-wrap: balance; font-weight: 600; }
+p, li, dd { text-wrap: pretty; }
+[data-numeric], .mono, input, .console { font-variant-numeric: tabular-nums; }
+
+/* Textura: scanlines discretas. Estáticas — sem flicker. */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: repeating-linear-gradient(
+    to bottom,
+    hsl(265 60% 78% / .022) 0 1px,
+    transparent 1px 3px
+  );
+  mix-blend-mode: screen;
+}
+
+/* ── Foco e acessibilidade ─────────────────────────────── */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+:focus:not(:focus-visible) { outline: none; }
+
+.skip-link {
+  position: absolute;
+  left: var(--sp-4);
+  top: -60px;
+  z-index: calc(var(--z-modal) + 1);
+  padding: var(--sp-2) var(--sp-4);
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-fg));
+  border-radius: var(--r-sm);
+  text-decoration: none;
+  font-weight: 700;
+  transition: top 140ms var(--ease-out);
+}
+.skip-link:focus { top: var(--sp-4); }
+
+.muted { color: hsl(var(--fg-muted)); }
+
+/* ── Topbar ────────────────────────────────────────────── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-3) var(--sp-6);
+  background: hsl(var(--surface) / .92);
+  border-bottom: 1px solid hsl(var(--border));
+  backdrop-filter: blur(8px);
+}
+
+.brand { display: flex; align-items: center; gap: var(--sp-3); }
+.brand-logo {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  color: hsl(var(--primary));
+  filter: drop-shadow(0 0 6px hsl(var(--primary) / .55));
+}
+.brand h1 {
+  font-size: 15px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.brand-tir { color: hsl(var(--primary)); }
+.brand-version {
+  font-size: 11px;
+  color: hsl(var(--fg-faint));
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  padding: 1px var(--sp-2);
+}
+
+.topbar-status { display: flex; gap: var(--sp-2); margin-left: auto; }
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 11.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--surface-2));
+  color: hsl(var(--fg-muted));
+}
+.status-chip .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: hsl(var(--fg-faint));
+  transition: background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+.status-chip[data-state="on"]  { color: hsl(var(--ok)); border-color: hsl(var(--ok) / .45); }
+.status-chip[data-state="on"] .dot  { background: hsl(var(--ok)); box-shadow: 0 0 10px hsl(var(--ok) / .8); }
+.status-chip[data-state="off"] { color: hsl(var(--danger)); border-color: hsl(var(--danger) / .45); }
+.status-chip[data-state="off"] .dot { background: hsl(var(--danger)); box-shadow: 0 0 10px hsl(var(--danger) / .7); }
+
+/* O chip do link é o gate mestre — ganha peso a mais que os outros dois. */
+.chip-link { font-weight: 700; border-width: 1.5px; }
+.chip-link[data-state="off"] { background: hsl(var(--danger) / .12); }
+/* Sem resposta, mas dentro da tolerância: o link ainda vale. Âmbar em vez de
+   vermelho — o Gerenciador está ocupado, não caiu. */
+.status-chip[data-state="instavel"] {
+  color: hsl(var(--warn));
+  border-color: hsl(var(--warn) / .5);
+  background: hsl(var(--warn) / .10);
+}
+.status-chip[data-state="instavel"] .dot {
+  background: hsl(var(--warn));
+  box-shadow: 0 0 10px hsl(var(--warn) / .7);
+}
+
+.topbar-actions { display: flex; align-items: center; gap: var(--sp-2); }
+.field-inline { font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em; color: hsl(var(--fg-muted)); }
+/* Espelho da conexão ativa: parece um campo, mas não é editável aqui. */
+.conexao-espelho {
+  font-size: 12.5px;
+  padding: var(--sp-1) var(--sp-3);
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  color: hsl(var(--fg-muted));
+  background: hsl(var(--surface-2));
+  border: 1px dashed hsl(var(--border-strong));
+  border-radius: var(--r-sm);
+}
+
+/* ── Layout principal ──────────────────────────────────── */
+/* Os três painéis ocupam a altura inteira: o log virou sobreposição e não
+   divide mais a grade. O recuo de baixo reserva a faixa da barra contraída,
+   para que nada fique escondido atrás dela. */
+.layout {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 340px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4)
+           calc(var(--log-topo) + var(--sp-4) + var(--sp-3));
+  min-height: 0;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: hsl(var(--surface));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--sp-2);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  border-bottom: 1px solid hsl(var(--border));
+}
+.panel-head h2 {
+  font-size: 12px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: hsl(var(--fg-muted));
+}
+
+.badge {
+  font-size: 11px;
+  padding: 1px var(--sp-2);
+  border-radius: 999px;
+  background: hsl(var(--primary-soft));
+  color: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary) / .35);
+}
+.badge[hidden] { display: none; }
+
+/* ── Lista de ambientes ────────────────────────────────── */
+.env-list {
+  list-style: none;
+  padding: var(--sp-2) 0;
+  margin: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.env-list:focus-visible { outline-offset: -2px; }
+
+.env-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 110ms var(--ease-out), border-color 110ms var(--ease-out);
+}
+.env-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.env-item .port { font-size: 11.5px; color: hsl(var(--fg-faint)); }
+.env-item .led {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: hsl(var(--fg-faint));
+}
+.env-item[data-status="running"] .led { background: hsl(var(--ok)); box-shadow: 0 0 8px hsl(var(--ok) / .8); }
+.env-item[data-status="partial"] .led { background: hsl(var(--warn)); box-shadow: 0 0 8px hsl(var(--warn) / .7); }
+.env-item[data-status="stopped"] .led { background: hsl(var(--danger) / .75); }
+/* Sem link com o Gerenciador não há status confiável: LED apagado, não vermelho. */
+.env-item[data-status="desconhecido"] .led {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px hsl(var(--fg-faint));
+}
+/* Importado aqui, mas sumiu de lá — o usuário precisa ver antes de tentar usar. */
+.env-item[data-orfao="true"] .name { color: hsl(var(--warn)); text-decoration: line-through; }
+
+@media (hover: hover) and (pointer: fine) {
+  .env-item:hover { background: hsl(var(--surface-2)); }
+}
+.env-item[aria-selected="true"] {
+  background: hsl(var(--primary-soft));
+  border-color: hsl(var(--primary) / .45);
+  color: hsl(var(--fg));
+}
+.env-item[aria-selected="true"] .name { font-weight: 700; }
+
+/* `minmax(0, 1fr)` e não `1fr`: o mínimo automático da grade é o conteúdo, e
+   um rótulo longo ("Configuração") empurrava a coluna vizinha para fora do
+   painel. Com o mínimo em 0 o texto encolhe em vez de vazar. */
+.crud-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-2) var(--sp-2);
+  border-top: 1px solid hsl(var(--border));
+}
+.crud-grid .btn {
+  min-width: 0;
+  padding-inline: var(--sp-2);
+  white-space: nowrap;
+}
+.crud-grid .btn[hidden] { display: none; }
+
+.empty-state {
+  padding: var(--sp-6) var(--sp-4);
+  color: hsl(var(--fg-muted));
+  text-align: center;
+  font-size: 13px;
+}
+.empty-state[hidden] { display: none; }
+
+/* ── Detalhes ──────────────────────────────────────────── */
+.detail-scroll { flex: 1; overflow-y: auto; padding: var(--sp-3); min-height: 0; }
+
+.url-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  background: linear-gradient(90deg, hsl(var(--surface-2)), hsl(var(--surface-3) / .6));
+  border: 1px solid hsl(var(--border));
+  border-left: 3px solid hsl(var(--accent));
+  border-radius: var(--r-md);
+}
+.url-banner .label {
+  font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: hsl(var(--fg-muted));
+}
+
+.link {
+  background: none;
+  border: none;
+  font: inherit;
+  color: hsl(var(--accent));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  min-height: 32px;
+}
+.link:disabled { color: hsl(var(--fg-faint)); text-decoration: none; cursor: default; }
+
+/* ── Gate: o Gerenciador precisa estar aberto ──────────── */
+.onboarding {
+  padding: var(--sp-6);
+  margin-bottom: var(--sp-4);
+  background: linear-gradient(180deg, hsl(var(--danger) / .10), hsl(var(--surface-2)));
+  border: 1px solid hsl(var(--danger) / .40);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1);
+}
+.onboarding[hidden] { display: none; }
+.onboarding-step {
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: hsl(var(--danger));
+  margin-bottom: var(--sp-2);
+}
+.onboarding h3 { font-size: 16px; margin-bottom: var(--sp-2); }
+.onboarding-msg { color: hsl(var(--fg-muted)); max-width: 65ch; }
+.onboarding-list {
+  margin: var(--sp-3) 0 0;
+  padding-left: var(--sp-6);
+  color: hsl(var(--fg-muted));
+  font-size: 13px;
+}
+.onboarding-list li { margin-bottom: var(--sp-1); }
+
+/* Sem link, o chip pulsa devagar: é o único lugar da tela que resolve o
+   problema, e o evento é raro o bastante para merecer movimento. */
+body.sem-link .chip-link { animation: halo 2400ms var(--ease-out) infinite; }
+@keyframes halo {
+  0%   { box-shadow: 0 0 0 0 hsl(var(--danger) / .45); }
+  70%  { box-shadow: 0 0 0 10px hsl(var(--danger) / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--danger) / 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.sem-link .chip-link {
+    animation: none;
+    box-shadow: 0 0 0 2px hsl(var(--danger) / .45);
+  }
+}
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: minmax(104px, 150px) minmax(0, 1fr);
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0 0 var(--sp-4);
+  font-size: 13px;
+  align-items: baseline;
+}
+.kv-grid.tight { margin-bottom: var(--sp-3); }
+.kv-grid dt {
+  color: hsl(var(--fg-muted));
+  font-size: 11.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+/* Caminhos quebram em qualquer ponto para caber inteiros, sem reticências. */
+.kv-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+/* Cards em largura total: caminho de arquivo é longo e não pode ser cortado —
+   é justamente o miolo dele que diferencia um ambiente do outro. */
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.card {
+  padding: var(--sp-4);
+  background: hsl(var(--surface-2));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-md);   /* interno = 10px, painel externo 14px + 4 de pad */
+  box-shadow: var(--shadow-1);
+}
+.card h3 {
+  font-size: 11.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: hsl(var(--primary));
+  margin-bottom: var(--sp-3);
+}
+
+/* ── Processos do ambiente (AppServer / DbAccess) ────────
+   Barra fixa no topo do painel central, irmã do `.panel-head` e fora do
+   `.detail-scroll`: é o estado consultado o tempo todo e não pode rolar
+   para fora da tela junto com os detalhes. */
+.proc-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-3) 0;
+  flex: none;
+}
+.proc-bar[hidden] { display: none; }
+.proc-chip {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-sm);
+  background: hsl(var(--surface));
+  color: hsl(var(--fg-muted));
+}
+.proc-chip .dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: hsl(var(--fg-faint));
+  transition: background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+.proc-chip .proc-nome { font-weight: 700; color: hsl(var(--fg)); }
+/* Nunca só a cor: o texto do estado carrega a mesma informação. */
+.proc-chip .proc-estado { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.proc-chip[data-state="on"] { border-color: hsl(var(--ok) / .45); color: hsl(var(--ok)); }
+.proc-chip[data-state="on"] .dot { background: hsl(var(--ok)); box-shadow: 0 0 8px hsl(var(--ok) / .8); }
+.proc-chip[data-state="off"] { border-color: hsl(var(--danger) / .35); color: hsl(var(--danger)); }
+.proc-chip[data-state="off"] .dot { background: hsl(var(--danger) / .8); }
+.proc-chip[data-state="ausente"] { border-style: dashed; color: hsl(var(--fg-faint)); }
+
+/* A porta não é um processo: sem LED, e o número em tabular para não dançar. */
+.proc-porta {
+  grid-template-columns: minmax(0, 1fr) auto;
+  font-variant-numeric: tabular-nums;
+}
+.proc-porta .proc-estado { font-size: 12.5px; color: hsl(var(--accent)); }
+
+/* ── Modo de execução ──────────────────────────────────── */
+/* Duas linhas empilhadas: o segmentado ocupa a largura inteira e os campos
+   vêm abaixo. Antes eles dividiam a linha, e em paralelo os campos empurravam
+   o segmentado para fora do painel; em sequencial ele encolhia. Em linha
+   própria, o segmentado tem o mesmo tamanho nos dois modos. */
+.modo-grid {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+/* Segunda linha, na mesma grade de 2 colunas do resto da tela. */
+.modo-campos {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-3) var(--sp-6);
+  align-items: start;
+}
+.modo-campos[hidden] { display: none; }
+.modo-campos .input { height: var(--altura-controle); max-width: 140px; }
+/* O switch não tem rótulo acima; alinha com o campo ao lado. */
+.modo-campos .check { margin-top: 22px; min-height: var(--altura-controle); }
+
+/* Segmentado em vez de dois rádios soltos: são duas opções excludentes e o
+   estado precisa ser lido de relance, não caçado num par de bolinhas. */
+.segmentado {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  background: hsl(var(--surface-3));
+  border: 1px solid hsl(var(--border-strong));
+  border-radius: var(--r-md);
+}
+.seg {
+  /* 40 + 2×2 de recuo + 2×1 de borda = 46, a altura dos demais controles. */
+  min-height: 40px;
+  padding: var(--sp-2) var(--sp-3);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: hsl(var(--fg-muted));
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);   /* 10 - 2 de padding = 8; 6 fica concêntrico */
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.seg[aria-checked="true"] {
+  background: hsl(var(--primary-soft));
+  color: hsl(var(--primary));
+  box-shadow: inset 0 0 0 1px hsl(var(--primary) / .45);
+}
+.modo-campos label { margin-top: 0; }
+.input-sm { max-width: 120px; }
+
+/* ── Tabela de portas ──────────────────────────────────── */
+.tabela-rolagem { overflow-x: auto; }
+.tabela-portas {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.tabela-portas th, .tabela-portas td {
+  padding: var(--sp-2) var(--sp-3);
+  text-align: left;
+  border-bottom: 1px solid hsl(var(--border));
+  white-space: nowrap;
+}
+.tabela-portas th {
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: hsl(var(--fg-muted));
+  font-weight: 600;
+}
+.tabela-portas td.slot { color: hsl(var(--accent)); font-weight: 700; }
+/* Porta que saiu do valor original: é o que o appserver.ini daquele slot vai
+   precisar sobrescrever, então merece destaque. */
+.tabela-portas td[data-deslocada="true"] { color: hsl(var(--warn)); }
+/* Slot que já virou instância: a porta dele está gravada no appserver.ini, e
+   o aviso de "vai sair do padrão" não tem mais o que avisar. */
+.tabela-portas tr[data-criada="true"] td[data-deslocada="true"] {
+  color: hsl(var(--fg));
+}
+
+/* ── Ambientes paralelos ───────────────────────────────── */
+.paralelos-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.check-todos {
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid hsl(var(--border));
+  margin-bottom: var(--sp-1);
+}
+.aviso-exclusao {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+  font-size: 12.5px;
+  color: hsl(var(--warn));
+  background: hsl(var(--warn) / .10);
+  border: 1px solid hsl(var(--warn) / .4);
+  border-radius: var(--r-sm);
+}
+.aviso-exclusao[hidden] { display: none; }
+/* Ponto pulsante: sinaliza trabalho em curso sem barra de progresso falsa —
+   não dá para saber quanto falta de um detach de banco. */
+.aviso-exclusao::before {
+  content: "";
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: hsl(var(--warn));
+  animation: pulsar 1200ms var(--ease-out) infinite;
+  flex: none;
+}
+@keyframes pulsar {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .25; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aviso-exclusao::before { animation: none; }
+}
+
+.lista-paralelos { list-style: none; margin: 0; padding: 0; }
+.lista-paralelos:empty { display: none; }
+.item-paralelo {
+  display: grid;
+  /* caixa · nome · porta · AppServer · DbAccess · estado */
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px dashed hsl(var(--border));
+  font-size: 12.5px;
+}
+.item-paralelo input { width: 16px; height: 16px; accent-color: hsl(var(--primary)); }
+.item-paralelo .nome { font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+.item-paralelo .portas { color: hsl(var(--fg-faint)); font-variant-numeric: tabular-nums; }
+/* Status por processo. O ponto colorido carrega a leitura rápida; o texto
+   fica junto porque cor sozinha não é informação para quem não a distingue. */
+.item-paralelo .processo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: 11.5px;
+  white-space: nowrap;
+  color: hsl(var(--fg-faint));
+}
+.item-paralelo .processo::before {
+  content: "";
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: hsl(var(--fg-faint) / .5);
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+}
+.item-paralelo .processo[data-vivo="true"] { color: hsl(var(--ok)); }
+.item-paralelo .processo[data-vivo="true"]::before {
+  background: hsl(var(--ok));
+  box-shadow: 0 0 0 3px hsl(var(--ok) / .18);
+}
+.item-paralelo .estado {
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 1px var(--sp-2);
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+}
+.item-paralelo[data-estado="rodando"] .estado {
+  color: hsl(var(--ok)); border-color: hsl(var(--ok) / .45);
+}
+.item-paralelo[data-estado="parada"] .estado { color: hsl(var(--fg-faint)); }
+.item-paralelo[data-estado="criada"] .estado {
+  color: hsl(var(--accent)); border-color: hsl(var(--accent) / .4);
+}
+
+/* ── Instâncias no disco ───────────────────────────────── */
+.lista-inventario { list-style: none; margin: 0; padding: 0; }
+.lista-inventario:empty { display: none; }
+.item-inventario {
+  display: grid;
+  /* caixa · nome · situação · tamanho · motivo */
+  grid-template-columns: 20px minmax(0, 1fr) auto auto minmax(0, 1.4fr);
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 40px;
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px dashed hsl(var(--border));
+  font-size: 12.5px;
+}
+.item-inventario input { width: 16px; height: 16px; accent-color: hsl(var(--danger)); }
+.item-inventario input:disabled { opacity: .35; }
+.item-inventario .nome { font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+
+/* Confirmação da limpeza: o caminho completo é o que se confere antes de
+   mandar apagar, então ele aparece inteiro, sem corte. */
+.item-limpeza {
+  padding: var(--sp-2) 0;
+  border-bottom: 1px dashed hsl(var(--border));
+  font-size: 12.5px;
+}
+.item-limpeza .banco { margin-left: var(--sp-2); color: hsl(var(--fg-faint)); }
+.item-limpeza .caminhos {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-1) var(--sp-2);
+  background: hsl(var(--surface-2));
+  border-radius: var(--r-sm);
+  font-size: 11.5px;
+  color: hsl(var(--fg-muted));
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.item-inventario .tamanho {
+  color: hsl(var(--fg-faint));
+  font-variant-numeric: tabular-nums;
+  min-width: 68px;
+  text-align: right;
+}
+.item-inventario .motivo {
+  color: hsl(var(--fg-faint));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item-inventario .situacao {
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 1px var(--sp-2);
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--fg-faint));
+  white-space: nowrap;
+}
+.item-inventario[data-situacao="ok"] .situacao {
+  color: hsl(var(--ok)); border-color: hsl(var(--ok) / .45);
+}
+/* Órfã e pasta sem registro são o que ocupa disco à toa: é o que o usuário
+   abre a tela para achar. */
+.item-inventario[data-situacao="orfa"] .situacao,
+.item-inventario[data-situacao="nao_registrada"] .situacao {
+  color: hsl(var(--warn)); border-color: hsl(var(--warn) / .45);
+}
+.item-inventario[data-situacao="sem_cadastro"] .situacao,
+.item-inventario[data-situacao="fantasma"] .situacao {
+  color: hsl(var(--accent)); border-color: hsl(var(--accent) / .4);
+}
+
+/* ── Combobox de testes ────────────────────────────────── */
+/* `align-items: center` e altura explícita nos dois: com o esticamento padrão
+   da grade, campo e botão ficavam à mercê do próprio recuo e desalinhavam. */
+.selecao-linha {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sp-2);
+  align-items: center;
+  margin: var(--sp-3) 0;
+}
+.selecao-linha .combo-botao,
+.selecao-linha .btn {
+  height: var(--altura-controle);
+  min-height: var(--altura-controle);
+}
+.combo { position: relative; min-width: 0; }
+.combo-botao {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  text-align: left;
+  cursor: pointer;
+}
+.combo-seta { color: hsl(var(--fg-muted)); flex: none; }
+.combo-painel {
+  position: absolute;
+  z-index: var(--z-dropdown, 10);
+  top: calc(100% + var(--sp-1));
+  left: 0;
+  right: 0;
+  padding: var(--sp-2);
+  background: hsl(var(--surface-2));
+  border: 1px solid hsl(var(--border-strong));
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  /* Cresce a partir do gatilho, não do centro. */
+  transform-origin: top center;
+  animation: scaleIn 160ms var(--ease-out) both;
+}
+.combo-painel[hidden] { display: none; }
+.combo-lista {
+  list-style: none;
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.combo-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 40px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 13px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .combo-item:hover { background: hsl(var(--surface-3)); }
+}
+.combo-item input { width: 16px; height: 16px; accent-color: hsl(var(--primary)); }
+.combo-item .modulo { font-size: 11.5px; color: hsl(var(--fg-faint)); }
+.combo-item[data-sem-case="true"] .rotina { color: hsl(var(--warn)); }
+
+/* ── Árvore da seleção ─────────────────────────────────── */
+.arvore { margin-top: var(--sp-3); }
+.arvore:empty { display: none; }
+.arvore-rotina {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-sm);
+  margin-bottom: var(--sp-2);
+  background: hsl(var(--surface));
+}
+.arvore-rotina > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+.arvore-rotina > summary::-webkit-details-marker { display: none; }
+.arvore-rotina > summary::before {
+  content: "▸";
+  color: hsl(var(--fg-faint));
+  transition: transform 120ms var(--ease-out);
+}
+.arvore-rotina[open] > summary::before { content: "▾"; }
+.arvore-rotina .modulo {
+  font-weight: 400;
+  font-size: 11.5px;
+  color: hsl(var(--fg-faint));
+}
+.arvore-rotina .contagem {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px var(--sp-2);
+  border-radius: 999px;
+  background: hsl(var(--primary-soft));
+  color: hsl(var(--primary));
+  font-variant-numeric: tabular-nums;
+}
+.arvore-casos {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--sp-3) var(--sp-3) var(--sp-8);
+  font-size: 12.5px;
+  color: hsl(var(--fg-muted));
+}
+.arvore-casos li { padding: 2px 0; border-bottom: 1px dashed hsl(var(--border)); }
+.arvore-rotina[data-ausente="true"] { border-color: hsl(var(--warn) / .5); }
+.arvore-rotina[data-ausente="true"] > summary { color: hsl(var(--warn)); }
+
+/* ── Ações fixas no topo do painel central ─────────────── */
+/* Ficavam no rodapé, onde o painel de log passou a subir por cima quando
+   expandido. No topo continuam alcançáveis com o log aberto. */
+.acoes-topo {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-3) 0;
+  flex: none;
+}
+
+/* ── Botões ────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-4);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: hsl(var(--fg));
+  background: hsl(var(--surface-3));
+  border: 1px solid hsl(var(--border-strong));
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: background-color 110ms var(--ease-out),
+              border-color 110ms var(--ease-out),
+              transform 90ms var(--ease-out),
+              opacity 110ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) { border-color: hsl(var(--primary) / .5); }
+}
+.btn:active:not(:disabled) { transform: scale(0.975); }
+.btn:disabled { opacity: .42; cursor: not-allowed; }
+
+.btn-sm { min-height: 36px; font-size: 12px; padding: var(--sp-1) var(--sp-3); }
+.btn-ghost { background: transparent; border-color: hsl(var(--border)); color: hsl(var(--fg-muted)); }
+.btn-primary {
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary-fg));
+}
+.btn-danger-ghost { color: hsl(var(--danger)); border-color: hsl(var(--danger) / .4); background: transparent; }
+/* Sólido, e só no botão que confirma o que não tem volta. */
+.btn-danger {
+  color: hsl(var(--fg));
+  background: hsl(var(--danger) / .85);
+  border-color: hsl(var(--danger));
+}
+.btn-danger:hover:not(:disabled) { background: hsl(var(--danger)); }
+
+.btn-run {
+  background: linear-gradient(180deg, hsl(var(--primary) / .22), hsl(var(--primary) / .10));
+  border-color: hsl(var(--primary) / .55);
+  color: hsl(265 60% 90%);
+  text-transform: uppercase;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px; height: 40px;
+  font: inherit;
+  color: hsl(var(--fg-muted));
+  background: hsl(var(--surface-3));
+  border: 1px solid hsl(var(--border-strong));
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 110ms var(--ease-out), border-color 110ms var(--ease-out),
+              transform 90ms var(--ease-out);
+}
+.icon-btn:active { transform: scale(0.95); }
+@media (hover: hover) and (pointer: fine) {
+  .icon-btn:hover { color: hsl(var(--primary)); border-color: hsl(var(--primary) / .5); }
+}
+
+/* ── Painel de execução ────────────────────────────────── */
+.exec-scroll { flex: 1; overflow-y: auto; padding: var(--sp-3); min-height: 0; }
+
+.exec-ambiente {
+  font-size: 13px;
+  font-weight: 700;
+  color: hsl(var(--accent));
+  margin-bottom: var(--sp-3);
+  overflow-wrap: anywhere;
+}
+
+/* Árvore ao vivo: ambiente > rotina > caso.
+   Recuo por nível em vez de conectores desenhados — o painel tem 340px e cada
+   traço vertical come largura que o nome do caso precisa. */
+.exec-arvore { list-style: none; margin: 0 0 var(--sp-4); padding: 0; }
+.exec-arvore .arvore-ambiente + .arvore-ambiente { margin-top: var(--sp-3); }
+
+.exec-arvore .arvore-titulo {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: hsl(var(--fg));
+  overflow-wrap: anywhere;
+}
+/* Ociosa continua visível, só recuada: o que interessa é saber que existe. */
+.exec-arvore .arvore-ambiente[data-ociosa="true"] .arvore-titulo {
+  color: hsl(var(--fg-faint));
+  font-weight: 600;
+}
+.exec-arvore .arvore-ambiente[data-ociosa="true"] .arvore-rotina {
+  font-style: italic;
+}
+
+.exec-arvore .arvore-rotina {
+  font-size: 12px;
+  color: hsl(var(--fg-muted));
+  padding-left: var(--sp-3);
+  margin-top: var(--sp-1);
+  border-left: 2px solid hsl(var(--border));
+  overflow-wrap: anywhere;
+}
+.exec-arvore .arvore-casos {
+  list-style: none;
+  margin: 0;
+  padding-left: var(--sp-3);
+  border-left: 2px solid hsl(var(--border));
+}
+.exec-arvore .arvore-casos li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: baseline;
+  padding: 1px 0 1px var(--sp-3);
+  font-size: 12px;
+  color: hsl(var(--fg-faint));
+  overflow-wrap: anywhere;
+}
+.exec-arvore .arvore-casos .marca { text-align: center; }
+.exec-arvore .arvore-casos li[data-estado="rodando"] {
+  color: hsl(var(--fg));
+  font-weight: 700;
+}
+.exec-arvore .arvore-casos li[data-estado="rodando"] .marca {
+  color: hsl(var(--accent));
+  /* Pulso lento: diz "vivo" sem competir com o resto da tela. Um caso do TIR
+     leva minutos, então a animação fica muito tempo em cena. */
+  animation: pulso-caso 1.8s var(--ease-out) infinite;
+}
+.exec-arvore .arvore-casos li[data-estado="ok"] { color: hsl(var(--fg-muted)); }
+.exec-arvore .arvore-casos li[data-estado="ok"] .marca { color: hsl(var(--ok)); }
+.exec-arvore .arvore-casos li[data-estado="erro"] { color: hsl(var(--danger)); }
+.exec-arvore .arvore-casos li[data-estado="erro"] .marca { color: hsl(var(--danger)); }
+.exec-arvore .arvore-casos li[data-estado="abortado"] .marca { color: hsl(var(--warn)); }
+
+@keyframes pulso-caso {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+.exec-subtitulo {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: hsl(var(--fg-faint));
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+
+.exec-fases { list-style: none; margin: 0 0 var(--sp-4); padding: 0; }
+.exec-fases li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: start;
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-3);
+  margin-left: var(--sp-1);
+  font-size: 12.5px;
+  color: hsl(var(--fg-faint));
+  border-left: 2px solid hsl(var(--border));
+}
+.exec-fases li .marca { text-align: center; }
+.exec-fases li[data-estado="ativo"] {
+  color: hsl(var(--fg));
+  border-left-color: hsl(var(--accent));
+  font-weight: 700;
+}
+.exec-fases li[data-estado="ativo"] .marca { color: hsl(var(--accent)); }
+.exec-fases li[data-estado="ok"] { color: hsl(var(--fg-muted)); border-left-color: hsl(var(--ok)); }
+.exec-fases li[data-estado="ok"] .marca { color: hsl(var(--ok)); }
+.exec-fases li[data-estado="erro"] { color: hsl(var(--danger)); border-left-color: hsl(var(--danger)); }
+
+.exec-final {
+  padding: var(--sp-3);
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+.exec-final[hidden] { display: none; }
+.exec-final[data-estado="ok"] {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary-soft));
+  border: 1px solid hsl(var(--primary) / .45);
+}
+.exec-final[data-estado="erro"] {
+  color: hsl(var(--danger));
+  background: hsl(var(--danger) / .10);
+  border: 1px solid hsl(var(--danger) / .45);
+}
+
+/* ── Console ─────────────────────────────────────────────
+   Contraído por padrão: só a barra do topo, colada no rodapé. Aberto, sobe
+   por cima do conteúdo até a altura que tinha quando era um painel da grade.
+   A translucidez é de 5% — o suficiente para perceber o que está atrás sem
+   comprometer a leitura do log, que é o motivo de ele existir. */
+.panel-log {
+  position: fixed;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  bottom: var(--sp-4);
+  z-index: var(--z-sticky);
+  height: var(--log-topo);
+  overflow: hidden;
+  background: hsl(var(--surface) / .95);
+  backdrop-filter: blur(10px);
+  transition: height 240ms var(--ease-out), box-shadow 240ms var(--ease-out);
+}
+.panel-log[data-aberto="true"] {
+  height: var(--log-aberto);
+  box-shadow: var(--shadow-2);
+}
+/* Contraído, a linha divisória não separa nada — só suja a barra. */
+.panel-log[data-aberto="false"] .panel-head { border-bottom-color: transparent; }
+
+/* A barra é o alvo de clique inteiro, e o conteúdo fica centrado nela. O
+   `.panel-head` padrão tem recuo maior embaixo, o que jogava o texto para a
+   linha de baixo quando a altura passou a ser fixa. */
+.panel-log .panel-head {
+  min-height: calc(var(--log-topo) - var(--sp-2) * 2);
+  padding-block: 0;
+  align-items: center;
+  cursor: pointer;
+}
+/* Os controles não repassam o clique: mexer na rolagem ou limpar o log não
+   pode abrir e fechar o painel junto. */
+.panel-log .log-tools { cursor: default; }
+
+.log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 36px;
+  padding: var(--sp-1) var(--sp-2);
+  margin-left: calc(var(--sp-2) * -1);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: hsl(var(--fg-muted));
+  background: none;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 110ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .log-toggle:hover { color: hsl(var(--primary)); }
+}
+.log-seta { transition: transform 240ms var(--ease-out); display: inline-block; }
+.panel-log[data-aberto="true"] .log-seta { transform: rotate(180deg); }
+
+.log-tools { display: flex; align-items: center; gap: var(--sp-3); }
+.log-tools [hidden] { display: none; }
+.switch { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: 11.5px; color: hsl(var(--fg-muted)); }
+.switch input { accent-color: hsl(var(--primary)); width: 16px; height: 16px; }
+
+.console {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: hsl(var(--fg));
+}
+.console .l { display: block; padding: 1px 0; }
+.console .l-DEBUG    { color: hsl(var(--fg-faint)); }
+.console .l-INFO     { color: hsl(var(--fg)); }
+.console .l-WARNING  { color: hsl(var(--warn)); }
+.console .l-ERROR    { color: hsl(var(--danger)); }
+.console .l-CRITICAL { color: hsl(var(--danger)); font-weight: 700; }
+
+/* ── Formulários e listas de modal ─────────────────────── */
+label {
+  display: block;
+  font-size: 11.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: hsl(var(--fg-muted));
+  margin: var(--sp-3) 0 var(--sp-1);
+}
+label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
+
+.hint { font-size: 11.5px; color: hsl(var(--fg-faint)); margin-top: var(--sp-1); }
+.hint code, code.mono { color: hsl(var(--accent)); }
+
+.form-error {
+  margin-top: var(--sp-3);
+  padding: var(--sp-3);
+  font-size: 12.5px;
+  color: hsl(var(--danger));
+  background: hsl(var(--danger) / .10);
+  border: 1px solid hsl(var(--danger) / .4);
+  border-radius: var(--r-sm);
+  white-space: pre-wrap;
+}
+.form-error[hidden] { display: none; }
+
+/* ── Formulário da configuração do TIR ─────────────────── */
+.config-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-3) var(--sp-6);
+  margin-top: var(--sp-4);
+}
+/* Campos de caminho ocupam a linha inteira: truncar caminho esconde justo o
+   miolo que diferencia um do outro. */
+.config-form .campo-largo { grid-column: 1 / -1; }
+
+.grupo-titulo {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: hsl(var(--primary));
+  margin-top: var(--sp-3);
+  padding-bottom: var(--sp-1);
+  border-bottom: 1px solid hsl(var(--border));
+}
+.grupo-titulo:first-child { margin-top: 0; }
+
+.campo { min-width: 0; }
+.campo > label { margin-top: 0; }
+.campo .hint { margin-top: var(--sp-1); }
+
+/* Switch não tem rótulo acima (o texto vive dentro do controle). Sem este
+   recuo, um switch ao lado de um campo com rótulo sobe 22 px e a linha fica
+   torta. O valor é a altura do bloco do rótulo: 18 px de linha + 4 px de
+   margem. */
+.campo > .switch-campo { margin-top: 22px; }
+
+.input, .select {
+  width: 100%;
+  min-height: 40px;
+  padding: var(--sp-2) var(--sp-3);
+  font: inherit;
+  font-size: 13px;
+  color: hsl(var(--fg));
+  background: hsl(var(--surface-2));
+  border: 1px solid hsl(var(--border-strong));
+  border-radius: var(--r-sm);
+  transition: border-color 110ms var(--ease-out), background-color 110ms var(--ease-out);
+}
+.input::placeholder { color: hsl(var(--fg-faint)); }
+.input:focus, .select:focus { border-color: hsl(var(--primary) / .7); }
+/* Campo imposto pelo backend: parece campo, mas deixa claro que não se edita. */
+.input:read-only, .input:disabled {
+  color: hsl(var(--fg-muted));
+  background: hsl(var(--surface) / .7);
+  border-style: dashed;
+  cursor: default;
+}
+.select {
+  appearance: none;
+  padding-right: var(--sp-8);
+  background-image: linear-gradient(45deg, transparent 50%, hsl(var(--fg-muted)) 50%),
+                    linear-gradient(135deg, hsl(var(--fg-muted)) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 17px, calc(100% - 13px) 17px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.select option { background: hsl(var(--surface-2)); color: hsl(var(--fg)); }
+
+.path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2); }
+
+/* Switch: trilho + botão. `input` real por baixo, para teclado e leitor de
+   tela funcionarem sem ARIA improvisado. */
+.switch-campo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-height: 44px;
+  padding: var(--sp-1) var(--sp-3);
+  background: hsl(var(--surface-2));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-sm);
+}
+.switch-campo > span { font-size: 12.5px; color: hsl(var(--fg)); }
+.switch-toggle { position: relative; flex: none; width: 44px; height: 24px; }
+.switch-toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch-trilho {
+  display: block;
+  width: 44px; height: 24px;
+  border-radius: 999px;
+  background: hsl(var(--surface-3));
+  border: 1px solid hsl(var(--border-strong));
+  transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out);
+  pointer-events: none;
+}
+.switch-trilho::after {
+  content: "";
+  position: absolute;
+  top: 4px; left: 4px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: hsl(var(--fg-faint));
+  transition: transform 140ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+.switch-toggle input:checked ~ .switch-trilho {
+  background: hsl(var(--primary-soft));
+  border-color: hsl(var(--primary) / .6);
+}
+.switch-toggle input:checked ~ .switch-trilho::after {
+  transform: translateX(20px);
+  background: hsl(var(--primary));
+}
+.switch-toggle input:focus-visible ~ .switch-trilho {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+/* Travado ligado: fica visivelmente ON, mas em cinza em vez do violeta dos
+   switches que o usuário controla. A cor é o recado — "ligado e assim fica" —
+   sem etiqueta nem nota de rodapé ocupando a linha. O leitor de tela recebe o
+   mesmo aviso pelo `aria-describedby` (`.sr-only` no HTML). */
+.switch-campo[data-travado="true"] { border-style: dashed; }
+.switch-campo[data-travado="true"] .switch-toggle input { cursor: default; }
+.switch-campo[data-travado="true"] > span { color: hsl(var(--fg-muted)); }
+.switch-campo[data-travado="true"] .switch-toggle input:checked ~ .switch-trilho {
+  background: hsl(var(--surface-3));
+  border-color: hsl(var(--border-strong));
+}
+.switch-campo[data-travado="true"] .switch-toggle input:checked ~ .switch-trilho::after {
+  background: hsl(var(--fg-muted));
+}
+
+/* Texto só para leitor de tela: o que a cor comunica visualmente. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Separado do formulário por uma linha: o que está aqui não vira config.json. */
+.bloco-fontes {
+  margin-top: var(--sp-6);
+  padding-top: var(--sp-2);
+  border-top: 1px dashed hsl(var(--border-strong));
+}
+.bloco-fontes .path-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+.raiz-situacao[data-estado="detectada"] { color: hsl(var(--accent)); }
+.raiz-situacao[data-estado="ausente"] { color: hsl(var(--danger)); }
+
+.aviso-divergencia {
+  margin-top: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  background: hsl(var(--warn) / .08);
+  border: 1px solid hsl(var(--warn) / .4);
+  border-radius: var(--r-sm);
+}
+.aviso-divergencia[hidden] { display: none; }
+.aviso-titulo {
+  font-size: 11.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: hsl(var(--warn));
+  margin-bottom: var(--sp-2);
+}
+.aviso-divergencia ul {
+  margin: 0 0 var(--sp-3);
+  padding-left: var(--sp-6);
+  font-size: 12.5px;
+  color: hsl(var(--fg-muted));
+}
+.aviso-divergencia code { color: hsl(var(--accent)); }
+
+.conn-list {
+  list-style: none;
+  margin: var(--sp-3) 0 var(--sp-2);
+  padding: var(--sp-1);
+  max-height: 280px;
+  overflow-y: auto;
+  background: hsl(var(--surface-2));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-md);
+}
+.conn-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.conn-item .meta { font-size: 11.5px; color: hsl(var(--fg-faint)); }
+.conn-item .led {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: hsl(var(--fg-faint));
+}
+.conn-item[data-status="running"] .led { background: hsl(var(--ok)); box-shadow: 0 0 8px hsl(var(--ok) / .8); }
+.conn-item[data-status="partial"] .led { background: hsl(var(--warn)); }
+.conn-item[aria-selected="true"] {
+  background: hsl(var(--primary-soft));
+  border-color: hsl(var(--primary) / .4);
+  font-weight: 700;
+}
+
+/* ── Modais ────────────────────────────────────────────── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--sp-6);
+  background: hsl(265 30% 2% / .72);
+  backdrop-filter: blur(3px);
+  animation: fade 140ms var(--ease-out) both;
+}
+.overlay[hidden] { display: none; }
+
+.modal {
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: min(88vh, 900px);
+  background: hsl(var(--surface));
+  border: 1px solid hsl(var(--border-strong));
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-modal);
+  transform-origin: center;
+  animation: scaleIn 200ms var(--ease-spring) both;
+}
+.modal-narrow { width: min(520px, 100%); }
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+  border-bottom: 1px solid hsl(var(--border));
+}
+.modal-head h2 { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
+
+.modal-body { padding: var(--sp-4); overflow-y: auto; min-height: 0; }
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  border-top: 1px solid hsl(var(--border));
+}
+
+.alert-icon {
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  margin: 0 auto var(--sp-3);
+  font-size: 22px; font-weight: 700;
+  border-radius: 50%;
+  color: hsl(var(--warn));
+  background: hsl(var(--warn) / .12);
+  border: 1px solid hsl(var(--warn) / .45);
+}
+.alert-msg { text-align: center; white-space: pre-wrap; font-size: 13.5px; }
+
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Enter escalonado só na primeira pintura da lista (evento raro). */
+.env-list.first-paint .env-item { animation: slideIn 240ms var(--ease-out) both; }
+.env-list.first-paint .env-item:nth-child(1) { animation-delay: 0ms; }
+.env-list.first-paint .env-item:nth-child(2) { animation-delay: 40ms; }
+.env-list.first-paint .env-item:nth-child(3) { animation-delay: 80ms; }
+.env-list.first-paint .env-item:nth-child(4) { animation-delay: 120ms; }
+.env-list.first-paint .env-item:nth-child(n+5) { animation-delay: 160ms; }
+
+/* ── Responsivo ────────────────────────────────────────── */
+@media (max-width: 1400px) {
+  .layout { grid-template-columns: 280px minmax(0, 1fr) 300px; }
+}
+@media (max-width: 1080px) {
+  .layout {
+    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .panel-exec { grid-column: 1 / -1; grid-row: 2 / 3; max-height: 40vh; }
+  .acoes-topo { grid-template-columns: 1fr 1fr; }
+  .modo-campos { grid-template-columns: 1fr; }
+  .proc-bar { grid-template-columns: 1fr 1fr; }
+  .proc-porta { grid-column: 1 / -1; }
+  .config-form { grid-template-columns: 1fr; }
+}
+
+/* ── Movimento reduzido ────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* Cor e opacidade continuam sendo feedback — só o movimento some. */
+  .btn:active:not(:disabled), .icon-btn:active { transform: none; }
+}

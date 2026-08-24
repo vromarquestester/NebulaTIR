@@ -1,0 +1,45 @@
+# ─── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# ─── Build / distribuição ────────────────────────────────────────────
+build/
+dist/
+# Regerado pelo NebulaTIR.spec a partir de src/_version.py a cada build.
+version_info.txt
+
+# ─── Estado da máquina do usuário ────────────────────────────────────
+# `config/` inteiro nasce ao lado do executável na primeira execução
+# (services/importados.py e services/preferencias.py). Nada dele é
+# empacotado, e versionar levaria os ambientes importados de uma máquina
+# para outra.
+config/
+
+# ─── Credenciais e sessões ───────────────────────────────────────────
+# Token do canal do Gerenciador; vive em %LOCALAPPDATA%, a regra cobre cópia
+# acidental para cá.
+bridge.json
+.env
+.env.*
+*.pem
+*.pfx
+
+# ─── Logs e temporários ──────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+
+# ─── IDE / ferramentas ───────────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

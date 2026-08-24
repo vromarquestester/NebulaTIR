@@ -1,0 +1,114 @@
+name: Gerar Executável e Release
+
+# Espelha o workflow do Gerenciador de Ambientes, sem os passos que ainda não
+# se aplicam aqui:
+#   - não há espelho em repositório público (a distribuição do NebulaTIR sai
+#     pelo pacote da Toolbox, quando ela existir);
+#   - não há notificação no Google Chat pelo mesmo motivo;
+#   - não há `gerar_docx.py` — o NebulaTIR ainda não tem docs/USER_GUIDE.md.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Baixar o código
+      uses: actions/checkout@v4
+
+    - name: Configurar o Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Cache de dependências pip
+      uses: actions/cache@v4
+      with:
+        path: ~\AppData\Local\pip\Cache
+        key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+        restore-keys: pip-${{ runner.os }}-
+
+    - name: Instalar dependências
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    # Valida que a tag pushada (vX.Y.Z) bate com src/_version.py.
+    # Evita publicar release com EXE marcado com versão diferente da tag.
+    - name: Validar versão (tag vs. src/_version.py)
+      id: validate_version
+      run: |
+        $tag = "${{ github.ref_name }}".TrimStart('v','V')
+        $line = Select-String -Path src/_version.py -Pattern '__version__\s*=\s*"([^"]+)"'
+        if (-not $line) { Write-Error "__version__ não encontrado em src/_version.py"; exit 1 }
+        $appVer = $line.Matches[0].Groups[1].Value
+        Write-Host "Tag    : $tag"
+        Write-Host "App    : $appVer"
+        if ($tag -ne $appVer) {
+          Write-Error "Versão divergente: tag=$tag, src/_version.py=$appVer. Rode scripts/bump_version.py e re-tagueie."
+          exit 1
+        }
+        echo "APP_VERSION=$appVer" >> $env:GITHUB_OUTPUT
+
+    # Regenera version_info.txt a partir do __version__ (single source of truth).
+    # O .spec faz o mesmo no início do build; aqui é para falhar cedo se o
+    # gerador quebrar, antes de gastar minutos no PyInstaller.
+    - name: Regenerar version_info.txt
+      run: python scripts/generate_version_info.py
+
+    - name: Compilar com PyInstaller
+      run: pyinstaller NebulaTIR.spec --noconfirm
+
+    - name: Verificar artefato
+      run: |
+        if (!(Test-Path "dist\NebulaTIR.exe")) {
+          Write-Error "Artefato não encontrado: dist\NebulaTIR.exe"
+          exit 1
+        }
+        $size = (Get-Item "dist\NebulaTIR.exe").Length / 1MB
+        Write-Host "Artefato gerado: NebulaTIR.exe ($([math]::Round($size, 1)) MB)"
+
+    - name: Extrair versão da tag
+      id: version
+      run: |
+        $version = "${{ github.ref_name }}"
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+    - name: Criar ZIP do executável
+      run: |
+        $zipName = "NebulaTIR_${{ steps.version.outputs.VERSION }}.zip"
+        $staging = "dist\staging"
+        New-Item -ItemType Directory -Path $staging -Force | Out-Null
+        Copy-Item "dist\NebulaTIR.exe" $staging
+        Compress-Archive -Path "$staging\*" -DestinationPath "dist\$zipName"
+        Remove-Item $staging -Recurse -Force
+        $size = (Get-Item "dist\$zipName").Length / 1MB
+        Write-Host "ZIP criado: $zipName ($([math]::Round($size, 1)) MB)"
+        Write-Host "Conteudo:"
+        Expand-Archive "dist\$zipName" -DestinationPath "dist\inspect" -Force
+        Get-ChildItem "dist\inspect" | ForEach-Object { Write-Host "  - $($_.Name) ($([math]::Round($_.Length/1KB, 1)) KB)" }
+        Remove-Item "dist\inspect" -Recurse -Force
+
+    # O mesmo ZIP já vai para a release logo abaixo; este artefato serve só
+    # para inspecionar a build quando algo dá errado. Diferente das releases,
+    # artefato do Actions CONSOME cota de storage da conta — daí a retenção
+    # curta em vez do padrão de 90 dias.
+    - name: Upload de artefato
+      uses: actions/upload-artifact@v4
+      with:
+        name: NebulaTIR
+        path: dist/NebulaTIR_*.zip
+        retention-days: 1
+
+    - name: Criar Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/NebulaTIR_*.zip
+        generate_release_notes: true

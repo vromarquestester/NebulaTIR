@@ -1,0 +1,18 @@
+# Interface: mesma stack do Gerenciador de Ambientes (WebView2 do Edge, sem
+# build step no front). Manter a versão travada junto com a de lá.
+pywebview==6.2.1
+
+# SQL Server. Só a limpeza de instância usa: derrubar o banco é o que libera o
+# MDF/LDF — enquanto ele está anexado, os GB não saem do disco. Mesma
+# biblioteca que o Gerenciador usa.
+pyodbc>=5.0
+
+# Testes
+pytest>=8.0
+
+# Empacotamento (NebulaTIR.spec)
+pyinstaller>=6.0
+
+# Só para gerar `resources/app.ico` (scripts/gerar_icone.py). Está nos
+# `excludes` do .spec e não vai para o executável.
+pillow>=10.0
