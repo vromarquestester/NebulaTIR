@@ -32,16 +32,41 @@ ambientes importados de outra máquina.
 Consequência prática: cada pasta onde o `.exe` estiver é uma instalação. Mover
 o executável sozinho para outro lugar começa do zero.
 
+## Release pela CI
+
+`.github/workflows/build_exe.yml` dispara em tag `v*`: valida a tag contra
+`src/_version.py`, compila, confere que `dist/NebulaTIR.exe` existe, zipa como
+`NebulaTIR_vX.Y.Z.zip` e publica release. Exercitado de ponta a ponta na
+`v0.1.0`.
+
+O ciclo completo:
+
+```bash
+uv run pytest
+uv run python scripts/bump_version.py patch
+git add src/_version.py version_info.txt
+git commit -m "chore(vX.Y.Z): bump version"
+git tag vX.Y.Z
+git push && git push origin vX.Y.Z
+```
+
+⚠ **O `build_exe.yml` não roda os testes** — valida versão e compila, nada
+mais. Uma tag publica release mesmo com a suíte vermelha; quem roda pytest é o
+workflow `Tests`, no push para `main`. Conferir que ele está verde antes de
+taguear.
+
+Sem espelho público e sem notificação, ao contrário do Gerenciador: a
+distribuição do NebulaTIR sai pelo pacote da ToolBox, quando ela existir. Por
+isso o zip leva só o executável — não há `docs/USER_GUIDE.md` para acompanhar.
+
 ## Diferenças em relação ao Gerenciador de Ambientes
 
-- **Sem `uac_admin`.** O NebulaTIR não eleva. Ele não sobe processo do Protheus
-  nem mexe em serviço; pedir administrador à toa treina o usuário a aceitar
-  elevação no automático.
 - **Sem `resources/protheus_base`.** Provisionar ambiente é trabalho do
   Gerenciador.
-- **Ícone opcional.** Não há `resources/app.ico` ainda, e `caminho_icone()`
-  devolve `None` sem quebrar — o `.exe` sai com o ícone padrão do PyInstaller.
-  Basta colocar o arquivo em `resources/app.ico` para o `.spec` incluí-lo.
+- **`uac_admin=True` nos dois.** A decisão inicial aqui foi não elevar, e caiu
+  quando a execução do TIR entrou no escopo: o NebulaTIR sobe instâncias do
+  AppServer, que exigem administrador, e processo sem elevação não cria filho
+  elevado.
 
 ## Rodar o Gerenciador do código-fonte sem console
 
@@ -60,8 +85,10 @@ Não afeta o usuário final: o executável empacotado é `console=False`.
 
 ## Pendências
 
-- [ ] Ícone próprio (`resources/app.ico`).
+- [x] ~~Ícone próprio.~~ `resources/app.ico` existe e o `.spec` o inclui.
+- [x] ~~Pipeline de build.~~ Ver "Release pela CI" acima.
 - [ ] Assinatura de código: como no Gerenciador, o `version_info.txt` embute o
       `VS_VERSIONINFO` mas **não** substitui Authenticode. O Windows vai
       alertar sobre editor desconhecido na primeira execução.
-- [ ] Pipeline de build, se o executável passar a ser distribuído.
+- [ ] Documentação de usuário (`docs/USER_GUIDE.md`), para o zip da release
+      levar o guia junto como o do Gerenciador.
