@@ -702,7 +702,10 @@ class Api:
                                 "(a porta leva algum tempo para responder)"})
         subida = appservers.subir_para_instancias(
             registrados, self._instancias, self._estado.detalhes_por_nome,
-            dbaccess_por_instancia=isolado)
+            dbaccess_por_instancia=isolado,
+            sincronizar_webagent=self._estado.sincronizar_webagent)
+        for aviso in subida.get("avisos", []):
+            self._fila.put({"kind": "log", "level": "WARNING", "text": aviso})
         for erro in subida.get("erros", []):
             self._fila.put({"kind": "log", "level": "ERROR",
                             "text": f"{erro['ambiente']}: {erro['erro']}"})
@@ -956,7 +959,10 @@ class Api:
                                 f"(a porta leva algum tempo para responder)"})
         subida = appservers.subir_para_instancias(
             itens, self._instancias, self._estado.detalhes_por_nome,
-            dbaccess_por_instancia=isolado)
+            dbaccess_por_instancia=isolado,
+            sincronizar_webagent=self._estado.sincronizar_webagent)
+        for aviso in subida.get("avisos", []):
+            self._fila.put({"kind": "log", "level": "WARNING", "text": aviso})
         for erro in subida.get("erros", []):
             self._fila.put({"kind": "log", "level": "ERROR",
                             "text": f"{erro['ambiente']}: {erro['erro']}"})

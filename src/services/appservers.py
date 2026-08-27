@@ -260,9 +260,64 @@ def subir_dbaccess_da_instancia(dbaccess_exe: str, porta: int,
     return {"ok": True, "subiu": True, "pid": proc.pid, "porta": int(porta)}
 
 
+def garantir_webagent(nome: str, detalhes_por_nome,
+                      sincronizar_webagent=None) -> dict:
+    """Deixa a estação com o WebAgent da release do ambiente.
+
+    O agente é **um só na estação** e a família dele acompanha a release do
+    Protheus: a 2610 pede `1.1.2-RC4`, as anteriores `1.0.25`. O Gerenciador
+    troca isso no "Subir" dele — só que quem sobe as instâncias paralelas é o
+    NebulaTIR, que não passa por lá. Alternar 2510 ↔ 2610 daqui deixava a
+    estação com o agente da release anterior, e o navegador é quem descobria.
+
+    A troca em si roda no Gerenciador (rota `/webagent`): o instalador está na
+    pasta do ambiente e duas janelas trocando o mesmo `package.json` brigariam.
+
+    **Nunca derruba a corrida.** Devolve `{"ok": False, "aviso": ...}` para o
+    chamador registrar; subir com o agente errado é problema de navegador, e
+    barrar a corrida por isso seria pior que avisar.
+    """
+    detalhes = detalhes_por_nome(nome)
+    if not detalhes.get("ok"):
+        return {"ok": False, "aviso": detalhes.get("erro", "")}
+
+    estado = detalhes.get("webagent") or {}
+    if not estado:
+        # Gerenciador anterior à rota: não há o que conferir, e inventar um
+        # alvo aqui criaria a segunda verdade que o canal existe para evitar.
+        return {"ok": True, "conferido": False}
+    if estado.get("sincronizado"):
+        return {"ok": True, "conferido": True, "trocado": False,
+                "alvo": estado.get("alvo", "")}
+
+    alvo = estado.get("alvo", "") or "?"
+    atual = estado.get("estacao", "") or "nenhum"
+    if not estado.get("tem_instalador"):
+        return {"ok": False, "conferido": True,
+                "aviso": f"O ambiente {nome} (Protheus "
+                         f"{estado.get('versao_protheus') or '?'}) precisa do "
+                         f"WebAgent {alvo} e a estação tem {atual}, mas o "
+                         f"instalador não está em <raiz>/web-agent. Rode o "
+                         f"Executar completo no Gerenciador para provisioná-lo."}
+
+    if sincronizar_webagent is None:
+        return {"ok": False, "conferido": True,
+                "aviso": f"O ambiente {nome} precisa do WebAgent {alvo} e a "
+                         f"estação tem {atual}."}
+
+    troca = sincronizar_webagent(nome)
+    if not troca.get("ok"):
+        return {"ok": False, "conferido": True,
+                "aviso": f"WebAgent {alvo} não instalado ({troca.get('erro') or '?'}); "
+                         f"a estação segue em {atual}."}
+    return {"ok": True, "conferido": True, "trocado": bool(troca.get("trocado")),
+            "de": troca.get("de", ""), "para": troca.get("para", ""), "alvo": alvo}
+
+
 def subir_para_instancias(instancias: list[dict], registro,
                           detalhes_por_nome,
-                          dbaccess_por_instancia: bool = True) -> dict:
+                          dbaccess_por_instancia: bool = True,
+                          sincronizar_webagent=None) -> dict:
     """Sobe um AppServer por instância paralela e anota o PID de cada uma.
 
     Antes de subir, grava no `appserver.ini` daquela instância as portas que o
@@ -273,7 +328,20 @@ def subir_para_instancias(instancias: list[dict], registro,
     na porta que o plano reservou — subido ANTES do AppServer, que precisa
     dele para abrir o ambiente.
     """
-    subidos, erros = [], []
+    subidos, erros, avisos = [], [], []
+
+    # Uma vez por corrida, não por instância: o agente é da estação, e as
+    # instâncias são clones do mesmo ambiente — logo, da mesma release.
+    if instancias:
+        agente = garantir_webagent(instancias[0]["ambiente"], detalhes_por_nome,
+                                   sincronizar_webagent)
+        if agente.get("aviso"):
+            avisos.append(agente["aviso"])
+            log.warning("[AGENT] %s", agente["aviso"])
+        elif agente.get("trocado"):
+            log.info("[AGENT] WebAgent da estação: %s → %s",
+                     agente.get("de") or "nenhum", agente.get("para"))
+
     for item in instancias:
         nome = item["ambiente"]
         if item.get("vivos", {}).get("appserver"):
@@ -363,4 +431,5 @@ def subir_para_instancias(instancias: list[dict], registro,
         subidos.append({"ambiente": nome, "pid": resultado["pid"],
                         "portas": portas, "reaproveitado": False})
 
-    return {"ok": bool(subidos), "subidos": subidos, "erros": erros}
+    return {"ok": bool(subidos), "subidos": subidos, "erros": erros,
+            "avisos": avisos}

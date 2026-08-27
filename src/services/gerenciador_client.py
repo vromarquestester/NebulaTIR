@@ -202,6 +202,16 @@ class GerenciadorClient:
             "odbc_user": odbc_user, "odbc_pass": odbc_pass,
             "subpasta": subpasta, "reaproveitar_temp": bool(reaproveitar_temp)})
 
+    def sincronizar_webagent(self, ambiente: str) -> dict:
+        """Pede ao Gerenciador o WebAgent que aquele ambiente exige.
+
+        A troca roda LÁ: o instalador vive na pasta do ambiente e o agente é
+        um só por estação — duas janelas trocando o mesmo `package.json`
+        disputariam o mesmo arquivo. Gerenciador antigo não tem a rota e
+        devolve 404, tratado como aviso, não como falha da corrida.
+        """
+        return self._post("/webagent", {"ambiente": ambiente})
+
     def ambientes(self) -> dict:
         return self._get("/ambientes")
 
@@ -435,6 +445,12 @@ class EstadoGerenciador:
             return {"ok": False, "erro": "Ambiente não existe mais no Gerenciador."}
         try:
             return self._client.detalhes(indice)
+        except GerenciadorOffline as e:
+            return {"ok": False, "erro": str(e)}
+
+    def sincronizar_webagent(self, nome: str) -> dict:
+        try:
+            return self._client.sincronizar_webagent(nome)
         except GerenciadorOffline as e:
             return {"ok": False, "erro": str(e)}
 
