@@ -604,3 +604,44 @@ def test_sem_porta_respondendo_o_estado_do_gerenciador_vale(api, monkeypatch):
 def test_porta_invalida_nao_explode(api, valor):
     """`port` vem do Gerenciador e pode chegar vazio ou sujo."""
     assert api._porta_no_ar(valor) is False
+
+
+# ── Atualização automática ─────────────────────────────────
+
+def _api_isolada(tmp_path):
+    from webui.api import Api
+    return Api(arquivo_importados=tmp_path / "importados.json",
+               arquivo_preferencias=tmp_path / "preferencias.json",
+               arquivo_instancias=tmp_path / "instancias.json",
+               iniciar_monitores=False, instalar_log=False)
+
+
+def test_configuracao_da_atualizacao_vai_para_as_preferencias(tmp_path):
+    api = _api_isolada(tmp_path)
+    api.atualizacao_configurar(automatica=False)
+
+    from services.preferencias import Preferencias
+    assert Preferencias(tmp_path / "preferencias.json").atualizacao_automatica \
+        is False
+
+
+def test_desligar_marca_o_estado_como_desligado(tmp_path):
+    api = _api_isolada(tmp_path)
+    assert api.atualizacao_configurar(automatica=False)["atualizacao"]["estado"] \
+        == "desligado"
+    # E religar não deixa a interface presa em "desligado" para sempre.
+    assert api.atualizacao_configurar(automatica=True)["atualizacao"]["estado"] \
+        == "ocioso"
+
+
+def test_estado_da_atualizacao_e_serializavel(tmp_path):
+    import json
+    json.dumps(_api_isolada(tmp_path).atualizacao_estado())     # vai para o JS
+
+
+def test_registrar_verificacao_persiste(tmp_path):
+    from services.preferencias import Preferencias
+    prefs = Preferencias(tmp_path / "preferencias.json")
+    prefs.registrar_verificacao("2026-09-02T18:00:00+00:00")
+    assert Preferencias(tmp_path / "preferencias.json") \
+        .atualizacao_ultima_verificacao == "2026-09-02T18:00:00+00:00"

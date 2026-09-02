@@ -36,11 +36,13 @@ from services import (
     portas,
     preparacao,
 )
+from services import atualizacao as _atualizacao
 from services import instancias as instancias_mod
+from services.canal import NOME_EXE, URL_MANIFESTO
 from services.instancias import Instancias
 from services.gerenciador_client import EstadoGerenciador
 from services.importados import RepositorioImportados
-from services.preferencias import MODOS, Preferencias
+from services.preferencias import BASE_DIR, MODOS, Preferencias
 from webui import log_bridge
 
 log = logging.getLogger(__name__)
@@ -97,8 +99,13 @@ class Api:
                          "total": 0, "removidos": [], "erros": [],
                          "recusadas": []}
 
+        self._atualizador = self._montar_atualizador()
+
         if iniciar_monitores:
             self._estado.iniciar()
+            # Verifica e baixa em espera sem travar a janela. Thread daemon:
+            # morre com o processo, e nada aqui merece segurar o fechamento.
+            self._atualizador.em_segundo_plano()
 
     # ── ciclo de vida (privados: não vão para o JS) ──
     def _set_window(self, janela) -> None:
@@ -106,6 +113,78 @@ class Api:
 
     def _encerrar(self) -> None:
         self._estado.parar()
+
+    # ─────────────────────────────────────────────────────────
+    # ATUALIZAÇÃO AUTOMÁTICA
+    # ─────────────────────────────────────────────────────────
+
+    def _montar_atualizador(self):
+        """Liga o `services.atualizacao` às preferências.
+
+        O NebulaTIR já tem `preferencias.json`, e é lá que a configuração mora
+        — diferente do Gerenciador, que não tem essa camada e usa o `[GLOBAL]`
+        do INI.
+        """
+        config = _atualizacao.ConfigAtualizacao(
+            automatica=self._prefs.atualizacao_automatica,
+            incluir_prerelease=self._prefs.atualizacao_incluir_prerelease,
+            ultima_verificacao=self._prefs.atualizacao_ultima_verificacao,
+            ao_registrar=self._prefs.registrar_verificacao,
+        )
+        return _atualizacao.Atualizador(
+            base_dir=BASE_DIR,
+            nome_exe=NOME_EXE,
+            url_manifesto=URL_MANIFESTO,
+            versao_atual=__version__,
+            config=config,
+        )
+
+    def atualizacao_estado(self) -> dict:
+        return self._atualizador.estado
+
+    def atualizacao_verificar(self) -> dict:
+        """"Verificar agora" — ignora o intervalo diário e o desligado."""
+        threading.Thread(
+            target=self._atualizador.verificar, kwargs={"forcado": True},
+            daemon=True).start()
+        return {"ok": True}
+
+    def atualizacao_baixar(self) -> dict:
+        threading.Thread(target=self._atualizador.baixar, daemon=True).start()
+        return {"ok": True}
+
+    def atualizacao_descartar(self) -> dict:
+        return {"ok": True, "atualizacao": self._atualizador.descartar()}
+
+    def atualizacao_reverter(self) -> dict:
+        """Volta para a versão anterior. Só vale até o `.old` ser apagado.
+
+        A troca acontece agora, mas quem está rodando é o binário que já foi
+        renomeado — a versão anterior só aparece na próxima abertura.
+        """
+        if not _atualizacao.reverter(BASE_DIR, NOME_EXE):
+            return {"ok": False, "erro": "Não há versão anterior para voltar."}
+        return {"ok": True,
+                "mensagem": "Feche e abra o programa para voltar à versão anterior."}
+
+    def atualizacao_configurar(self, automatica=None, incluir_prerelease=None) -> dict:
+        """Liga/desliga o automático. Desligado, o "Verificar agora" continua."""
+        novo = {}
+        cfg = self._atualizador.config
+        if automatica is not None:
+            cfg.automatica = bool(automatica)
+            novo["atualizacao_automatica"] = cfg.automatica
+            # O estado nasce "desligado" quando a preferência está desligada;
+            # religar sem isto deixaria a interface exibindo "desligado" para
+            # sempre.
+            self._atualizador._marcar(
+                _atualizacao.OCIOSO if cfg.automatica else _atualizacao.DESLIGADO)
+        if incluir_prerelease is not None:
+            cfg.incluir_prerelease = bool(incluir_prerelease)
+            novo["atualizacao_incluir_prerelease"] = cfg.incluir_prerelease
+        if novo:
+            self._prefs.salvar(novo)
+        return {"ok": True, "atualizacao": self._atualizador.estado}
 
     # ─────────────────────────────────────────────────────────
     # ESTADO / LEITURA

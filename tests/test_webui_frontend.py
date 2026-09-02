@@ -358,3 +358,34 @@ def test_instancias_sao_redesenhadas_durante_a_corrida():
     render só acontecia ao trocar de ambiente."""
     trecho = JS[JS.index("if (linkMudou) await renderDetalhes();"):]
     assert "renderParalelos()" in trecho[:900]
+
+
+# ── Atualização do programa ────────────────────────────────
+
+def test_chip_de_atualizacao_nasce_escondido():
+    """Em dia, ocioso e desligado não são notícia.
+
+    Chip permanente na barra vira ruído fixo para uma informação que interessa
+    uma vez por mês.
+    """
+    bloco = HTML.split('id="chip-update"')[1].split(">")[0]
+    assert "hidden" in bloco
+
+
+def test_changelog_nao_vai_por_innerhtml():
+    """O texto vem do `latest.json`, que é arquivo externo."""
+    trecho = JS.split("$('#upd-changelog').innerHTML = '';")[1][:400]
+    assert "li.textContent = txt" in trecho
+    assert "innerHTML = txt" not in trecho
+
+
+def test_estado_da_atualizacao_nao_e_lido_a_cada_volta():
+    """`loopStatus` roda a cada 2 s; o pendente.json muda uma vez por dia."""
+    assert "ticksUpdate = (ticksUpdate + 1) % 5;" in JS
+
+
+def test_desligar_o_automatico_nao_esconde_o_verificar_agora():
+    """Desligar o automático não é renunciar a atualizar."""
+    assert 'id="btn-upd-verificar"' in HTML
+    trecho = JS.split("$('#btn-upd-verificar').disabled =")[1][:120]
+    assert "verificando" in trecho and "baixando" in trecho

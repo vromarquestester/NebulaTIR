@@ -53,6 +53,15 @@ PADRAO = {
     # Voltando para falso, o desenho antigo volta inteiro: DBPort fixo em 7890
     # e um só processo, com os aliases consolidados.
     "dbaccess_por_instancia": True,
+    # ── atualização automática ──
+    # Ligada por padrão. Desligar NÃO impede o "Verificar agora" na interface:
+    # desligar o automático não é renunciar a atualizar.
+    "atualizacao_automatica": True,
+    # Vazio = primeira execução, e ela sempre verifica. Quem acabou de extrair
+    # o pacote de instalação está várias versões atrás de propósito.
+    "atualizacao_ultima_verificacao": "",
+    # Versão com sufixo (`-beta1`, `-rc1`) só chega a quem pede.
+    "atualizacao_incluir_prerelease": False,
 }
 
 
@@ -104,6 +113,12 @@ class Preferencias:
         limpo["dividir_casos"] = _para_bool(limpo.get("dividir_casos"))
         limpo["dbaccess_por_instancia"] = _para_bool(
             limpo.get("dbaccess_por_instancia"))
+        limpo["atualizacao_automatica"] = _para_bool(
+            limpo.get("atualizacao_automatica"))
+        limpo["atualizacao_incluir_prerelease"] = _para_bool(
+            limpo.get("atualizacao_incluir_prerelease"))
+        limpo["atualizacao_ultima_verificacao"] = str(
+            limpo.get("atualizacao_ultima_verificacao") or "").strip()
 
         limpo["raiz_testes"] = str(limpo.get("raiz_testes") or "").strip()
         return limpo
@@ -164,6 +179,28 @@ class Preferencias:
     @property
     def dbaccess_por_instancia(self) -> bool:
         return bool(self._dados["dbaccess_por_instancia"])
+
+    @property
+    def atualizacao_automatica(self) -> bool:
+        return bool(self._dados["atualizacao_automatica"])
+
+    @property
+    def atualizacao_incluir_prerelease(self) -> bool:
+        return bool(self._dados["atualizacao_incluir_prerelease"])
+
+    @property
+    def atualizacao_ultima_verificacao(self) -> str:
+        return self._dados["atualizacao_ultima_verificacao"]
+
+    def registrar_verificacao(self, quando: str) -> None:
+        """Grava a data da última consulta ao manifesto.
+
+        Escrita direta, sem passar pelo `salvar`: isto vem da thread de
+        verificação e não é ajuste do usuário — logar como mudança de
+        preferência poluiria o log a cada abertura.
+        """
+        self._dados["atualizacao_ultima_verificacao"] = quando
+        self._salvar()
 
     # ── escrita ──
     def salvar(self, novo: dict) -> dict:

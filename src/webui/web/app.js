@@ -36,6 +36,7 @@ const state = {
   exclusao: { ativa: false },        // exclusão de paralelos em andamento
   inventario: [],                    // instâncias no disco, com situação
   limpeza: { ativa: false },         // remoção do que o Gerenciador não alcança
+  atualizacao: null,                // último estado de `services.atualizacao`
   podeExecutar: false,
   motivoExecutar: '',
   fontes: {},
@@ -837,7 +838,97 @@ async function loopStatus() {
 
     atualizarBotoes();
   } catch (e) { /* janela fechando */ }
+
+  // A cada 5ª volta (10 s), ou sempre que o modal estiver aberto. Ler o estado
+  // da atualização a cada 2 s tocaria o disco (o `pendente.json`) sem motivo:
+  // ele muda uma vez por dia.
+  ticksUpdate = (ticksUpdate + 1) % 5;
+  if (ticksUpdate === 0 || !$('#overlay-atualizacao').hidden) atualizarUpdate();
+
   setTimeout(loopStatus, 2000);
+}
+
+/* ── Atualização do programa ───────────────────────────── */
+
+/* O que cada estado mostra no chip da barra. Ausente = chip escondido: em dia,
+   ocioso e desligado não são notícia, e chip permanente vira ruído fixo. */
+const ROTULO_UPDATE = {
+  disponivel: 'Atualização disponível',
+  baixando:   'Baixando atualização…',
+  pronto:     'Reinicie para atualizar',
+  erro:       'Falha ao atualizar',
+};
+
+let ticksUpdate = 0;
+
+async function atualizarUpdate() {
+  try {
+    state.atualizacao = await api.atualizacao_estado();
+  } catch (e) { return; }        // janela fechando
+  pintarChipUpdate();
+  if (!$('#overlay-atualizacao').hidden) pintarModalUpdate();
+}
+
+function pintarChipUpdate() {
+  const u = state.atualizacao;
+  const chipEl = $('#chip-update');
+  if (!u) { chipEl.hidden = true; return; }
+
+  const rotulo = ROTULO_UPDATE[u.estado];
+  chipEl.hidden = !rotulo;
+  if (!rotulo) return;
+  chipEl.dataset.state = u.estado === 'erro' ? 'off'
+                       : u.estado === 'pronto' ? 'pronto' : 'unknown';
+  $('#chip-update-text').textContent =
+    u.estado === 'baixando' ? `Baixando… ${u.progresso}%` : rotulo;
+}
+
+function pintarModalUpdate(extra) {
+  const u = state.atualizacao || {};
+  $('#upd-versao-atual').textContent = u.versao_atual || '—';
+
+  const temNova = Boolean(u.versao_nova) && u.versao_nova !== u.versao_atual;
+  $('#upd-linha-nova').hidden = !temNova;
+  $('#upd-versao-nova').textContent = u.versao_nova || '—';
+
+  const mensagens = {
+    desligado:   'Atualização automática desligada.',
+    ocioso:      'Nada verificado ainda.',
+    verificando: 'Consultando…',
+    'em-dia':    'Você está na versão mais recente.',
+    disponivel:  'Há uma versão nova. Baixe para instalar na próxima abertura.',
+    baixando:    'Baixando…',
+    pronto:      'Baixada. Feche e abra o programa para aplicar.',
+  };
+  // Erro traz a causa junto (proxy, hash divergente, versão mínima) — é o
+  // texto que diz o que fazer, e engoli-lo viraria "não atualiza e não diz".
+  $('#upd-mensagem').textContent = extra || (u.estado === 'erro'
+    ? (u.mensagem || 'Falhou.')
+    : (mensagens[u.estado] || '—'));
+
+  $('#upd-progresso').hidden = u.estado !== 'baixando';
+  $('#upd-barra').style.width = `${u.progresso || 0}%`;
+
+  const itens = u.changelog || [];
+  $('#upd-changelog-box').hidden = itens.length === 0;
+  $('#upd-changelog').innerHTML = '';
+  itens.forEach(txt => {
+    const li = document.createElement('li');
+    li.textContent = txt;          // vem de arquivo externo: nunca innerHTML
+    $('#upd-changelog').appendChild(li);
+  });
+
+  $('#chk-upd-auto').checked = u.automatica !== false;
+  $('#btn-upd-baixar').hidden = u.estado !== 'disponivel';
+  $('#btn-upd-verificar').disabled = u.estado === 'verificando'
+                                  || u.estado === 'baixando';
+  $('#btn-upd-reverter').hidden = u.pode_reverter !== true;
+}
+
+async function abrirAtualizacao() {
+  await atualizarUpdate();
+  pintarModalUpdate();
+  abrirModal('overlay-atualizacao');
 }
 
 function chip(elChip, elTexto, valor, rotulo) {
@@ -1485,6 +1576,34 @@ function ligarEventos() {
   $('#btn-expandir-tudo').addEventListener('click', () => abrirTodasAsRotinas(true));
   $('#btn-contrair-tudo').addEventListener('click', () => abrirTodasAsRotinas(false));
   $('#btn-limpar-resultado').addEventListener('click', limparResultados);
+
+  // ── atualização do programa ──
+  $('#chip-update').addEventListener('click', abrirAtualizacao);
+  $('#btn-fechar-upd').addEventListener('click',
+    () => fecharModal('overlay-atualizacao'));
+
+  $('#btn-upd-verificar').addEventListener('click', async () => {
+    await api.atualizacao_verificar();     // roda em thread; o loop repinta
+    await atualizarUpdate();
+  });
+
+  $('#btn-upd-baixar').addEventListener('click', async () => {
+    await api.atualizacao_baixar();
+    await atualizarUpdate();
+  });
+
+  $('#chk-upd-auto').addEventListener('change', async (ev) => {
+    await api.atualizacao_configurar(ev.target.checked, null);
+    await atualizarUpdate();
+  });
+
+  $('#btn-upd-reverter').addEventListener('click', async () => {
+    const r = await api.atualizacao_reverter();
+    // A troca já aconteceu em disco, mas quem está rodando é o binário
+    // renomeado: a versão anterior só aparece na próxima abertura.
+    await atualizarUpdate();
+    pintarModalUpdate(r.ok ? r.mensagem : r.erro);
+  });
 
   $('#btn-importar').addEventListener('click', abrirImportar);
   $('#btn-cancelar-importar').addEventListener('click', () => fecharModal('overlay-importar'));

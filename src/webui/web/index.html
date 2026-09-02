@@ -38,6 +38,14 @@
         <span class="dot" aria-hidden="true"></span>
         <span id="chip-sql-text">SQL: —</span>
       </p>
+      <!-- Só aparece quando há o que dizer. Chip permanente de "em dia" seria
+           ruído fixo na barra para uma informação que interessa uma vez por
+           mês. O NebulaTIR se atualiza sozinho, independente do Gerenciador. -->
+      <button type="button" class="status-chip chip-btn" id="chip-update"
+              data-state="unknown" hidden>
+        <span class="dot" aria-hidden="true"></span>
+        <span id="chip-update-text">Atualização</span>
+      </button>
     </div>
 
     <div class="topbar-actions">
@@ -558,6 +566,63 @@
       <div class="modal-foot">
         <button type="button" class="btn btn-ghost" id="btn-cancelar-excluir">Cancelar</button>
         <button type="button" class="btn btn-danger-ghost" id="btn-confirmar-excluir">Excluir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────── Modal: atualização do programa ───────────── -->
+  <div class="overlay" id="overlay-atualizacao" hidden>
+    <div class="modal modal-narrow" role="dialog" aria-modal="true"
+         aria-labelledby="tit-modal-upd">
+      <div class="modal-head">
+        <h2 id="tit-modal-upd">Atualização</h2>
+        <button type="button" class="icon-btn" id="btn-fechar-upd" aria-label="Fechar">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <p class="upd-linha">
+          <span>Versão instalada</span>
+          <strong id="upd-versao-atual" data-numeric>—</strong>
+        </p>
+        <p class="upd-linha" id="upd-linha-nova" hidden>
+          <span>Versão publicada</span>
+          <strong id="upd-versao-nova" data-numeric>—</strong>
+        </p>
+
+        <p class="hint" id="upd-mensagem" aria-live="polite">—</p>
+
+        <div id="upd-progresso" hidden>
+          <div class="upd-trilho"><span id="upd-barra" style="width:0%"></span></div>
+        </div>
+
+        <div id="upd-changelog-box" hidden>
+          <h3 class="upd-sub">O que mudou</h3>
+          <ul class="upd-changelog" id="upd-changelog"></ul>
+        </div>
+
+        <label class="check-inline">
+          <input type="checkbox" id="chk-upd-auto">
+          <span>Baixar atualizações automaticamente</span>
+        </label>
+        <!-- Desligar o automático não é renunciar a atualizar: o botão
+             "Verificar agora" continua valendo. -->
+        <p class="hint">
+          Com isto desligado, nada é baixado sozinho — mas você ainda pode
+          verificar a qualquer momento. A troca sempre acontece na próxima
+          abertura do programa.
+        </p>
+      </div>
+
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="btn-upd-reverter" hidden>
+          Voltar à versão anterior
+        </button>
+        <button type="button" class="btn btn-ghost" id="btn-upd-verificar">
+          Verificar agora
+        </button>
+        <button type="button" class="btn btn-primary" id="btn-upd-baixar" hidden>
+          Baixar
+        </button>
       </div>
     </div>
   </div>

@@ -22,3 +22,7 @@
 #
 # ⚠ Nao empurre linhas novas para a main entre criar a tag e o build terminar:
 # a CI zera o arquivo inteiro, e o que entrou nesse intervalo se perderia.
+
+- O programa verifica sozinho se ha versao nova, baixa em espera e troca na proxima abertura.
+- Atualizacao automatica pode ser desligada; "Verificar agora" continua valendo com ela desligada.
+- Da para voltar a versao anterior enquanto a copia antiga estiver no disco.

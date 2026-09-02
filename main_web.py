@@ -42,6 +42,25 @@ def caminho_icone() -> str | None:
 
 
 def main() -> None:
+    # Troca o executável, se houver versão em espera, e sai. Roda antes de
+    # qualquer coisa cara: janela, preferências, canal com o Gerenciador.
+    #
+    # Executável em uso não pode ser sobrescrito, mas pode ser renomeado — e é
+    # por isso que este processo precisa relançar e sair. Ele continua rodando
+    # a partir do `.old`; seguir aberto deixaria o usuário na versão velha
+    # achando que atualizou.
+    #
+    # O `.spec` marca `uac_admin=True`, então já estamos elevados aqui e a
+    # escrita na pasta do programa passa.
+    from services.atualizacao import preparar_partida, relancar  # noqa: E402
+    from services.canal import NOME_EXE  # noqa: E402
+    from services.preferencias import BASE_DIR  # noqa: E402
+
+    novo = preparar_partida(BASE_DIR, NOME_EXE)
+    if novo is not None:
+        relancar(novo)
+        return
+
     import webview  # noqa: E402
 
     from _version import __version__  # noqa: E402

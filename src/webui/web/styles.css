@@ -1797,3 +1797,58 @@ label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
   /* O card que passa por baixo encostava no texto da aba. */
   padding-top: var(--sp-1);
 }
+
+/* ── Atualização do programa ─────────────────────────────── */
+
+/* O chip da barra vira botão. `chip-btn` só acrescenta o que um <button>
+   perde por não ser <p>: fundo, cursor e a borda de hover. */
+.chip-btn {
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+}
+.chip-btn:hover { border-color: hsl(var(--accent) / .55); }
+/* Atualização baixada e esperando o reinício. Usa o acento, não o verde de
+   "ok": não é um estado saudável, é uma pendência do usuário. */
+.status-chip[data-state="pronto"] { color: hsl(var(--accent)); border-color: hsl(var(--accent) / .5); }
+.status-chip[data-state="pronto"] .dot { background: hsl(var(--accent)); box-shadow: 0 0 10px hsl(var(--accent) / .8); }
+
+.upd-linha {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+.upd-sub {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: hsl(var(--fg-faint));
+}
+.upd-changelog {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.upd-changelog li { margin: 3px 0; }
+.upd-trilho {
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: hsl(var(--surface-3));
+}
+.upd-trilho > span {
+  display: block;
+  height: 100%;
+  background: hsl(var(--primary));
+  transition: width .2s linear;
+}
+.check-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+  cursor: pointer;
+}
