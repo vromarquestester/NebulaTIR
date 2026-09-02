@@ -33,3 +33,8 @@ jobs:
 
       - name: Rodar pytest
         run: pytest -v
+
+      # Formato errado no changelog para o pipeline em segundos, em vez de sair
+      # uma release com o card sem as mudanças de alguém.
+      - name: Validar changelog pendente
+        run: python scripts/changelog.py --validar

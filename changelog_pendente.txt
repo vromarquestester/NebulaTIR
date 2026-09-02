@@ -1,0 +1,24 @@
+# Changelog da PROXIMA versao do NebulaTIR.
+#
+# Fechou uma mudanca? Escreva a linha aqui, no MESMO commit da mudanca. E este
+# arquivo que vira:
+#   - o campo "changelog" do latest.json (o que o programa instalado mostra);
+#   - a secao "O que mudou" do corpo da release;
+#   - o card no Google Chat.
+#
+# Formato (texto simples, sem markdown):
+#   - linha comecando com "-" e uma mudanca;
+#   - linha comecando com "#" e comentario e nao aparece em lugar nenhum;
+#   - linha em branco e ignorada;
+#   - qualquer outra linha e ERRO e para o pipeline antes de publicar. Texto
+#     solto ignorado sumiria do card sem ninguem notar.
+#
+# Escreva para quem USA o programa, nao para quem le o codigo:
+#   ruim : refatora _resolver_temp_do_banco
+#   bom  : Clonar ambiente reaproveita a pasta temp do pai e nao rebaixa GB.
+#
+# ⚠ Publicada a versao, este arquivo e ZERADO pela CI e volta a ser so este
+# cabecalho. O historico fica no corpo da release, que e permanente.
+#
+# ⚠ Nao empurre linhas novas para a main entre criar a tag e o build terminar:
+# a CI zera o arquivo inteiro, e o que entrou nesse intervalo se perderia.

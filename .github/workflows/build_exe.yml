@@ -1,11 +1,14 @@
 name: Gerar Executável e Release
 
-# Espelha o workflow do Gerenciador de Ambientes, sem os passos que ainda não
-# se aplicam aqui:
-#   - não há espelho em repositório público (a distribuição do NebulaTIR sai
-#     pelo pacote da Toolbox, quando ela existir);
-#   - não há notificação no Google Chat pelo mesmo motivo;
-#   - não há `gerar_docx.py` — o NebulaTIR ainda não tem docs/USER_GUIDE.md.
+# Espelha o workflow do Gerenciador de Ambientes.
+#
+# Desde 2026-09-02 o NebulaTIR tem vitrine própria
+# (`vromarquestester/NebulaTIR-Releases`) e canal de atualização próprio. Antes
+# disso a distribuição saía só pelo pacote da ToolBox — o pacote passa a ser
+# apenas a porta de entrada, baixado uma vez, e daí em diante cada ferramenta
+# se atualiza sozinha pelo `latest.json` da sua vitrine.
+#
+# Continua sem `gerar_docx.py`: o NebulaTIR ainda não tem docs/USER_GUIDE.md.
 
 on:
   push:
@@ -21,7 +24,11 @@ jobs:
 
     steps:
     - name: Baixar o código
+      # fetch-depth: 0 porque o passo final commita o changelog zerado na main,
+      # e push a partir de clone raso é recusado com "shallow update not allowed".
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Configurar o Python
       uses: actions/setup-python@v5
@@ -56,6 +63,11 @@ jobs:
           exit 1
         }
         echo "APP_VERSION=$appVer" >> $env:GITHUB_OUTPUT
+
+    # Formato errado no changelog para o pipeline ANTES do build, em segundos,
+    # em vez de depois de gastar minutos no PyInstaller.
+    - name: Validar changelog pendente
+      run: python scripts/changelog.py --validar
 
     # Regenera version_info.txt a partir do __version__ (single source of truth).
     # O .spec faz o mesmo no início do build; aqui é para falhar cedo se o
@@ -107,8 +119,131 @@ jobs:
         path: dist/NebulaTIR_*.zip
         retention-days: 1
 
+    - name: Montar corpo da release
+      run: |
+        $mudou = python scripts/changelog.py --corpo-release
+        $corpo = "Nova versão do NebulaTIR.`n`n📦 Baixe o ``.zip`` na seção **Assets** abaixo."
+        if ($mudou) { $corpo = "$corpo`n`n## O que mudou`n`n$mudou" }
+        $corpo | Out-File -FilePath "dist\corpo_release.md" -Encoding utf8
+        Write-Host $corpo
+
     - name: Criar Release
       uses: softprops/action-gh-release@v2
       with:
         files: dist/NebulaTIR_*.zip
-        generate_release_notes: true
+        body_path: dist/corpo_release.md
+
+    # ─────────────────────────────────────────────────────────────
+    # Distribuição pública: replica a release na vitrine, permitindo download
+    # sem autenticação no GitHub.
+    #
+    # Requer o secret RELEASE_REPO_TOKEN (fine-grained PAT com Contents: Read
+    # and write APENAS na vitrine). Quem publica não lê fonte.
+    #
+    # A vitrine não tem workflow nem secret — ela é depósito. Release que chega
+    # lá não dispara nada; quem avisa é quem publica, e por isso o card do Chat
+    # sai daqui.
+    # ─────────────────────────────────────────────────────────────
+    - name: Publicar release na vitrine
+      uses: softprops/action-gh-release@v2
+      with:
+        repository: vromarquestester/NebulaTIR-Releases
+        token: ${{ secrets.RELEASE_REPO_TOKEN }}
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        name: Versão ${{ steps.version.outputs.VERSION }}
+        body_path: dist/corpo_release.md
+        files: dist/NebulaTIR_*.zip
+
+    # O canal que o programa instalado consulta, em
+    # raw.githubusercontent.com/<vitrine>/main/latest.json.
+    #
+    # Vem DEPOIS da release pública: aponta para o anexo dela, e publicá-lo
+    # antes deixaria a URL apontando para um arquivo que ainda não existe.
+    #
+    # Um arquivo em vez da API de releases porque `raw` não tem o teto de 60
+    # requisições/hora por IP — a equipe inteira atrás de um NAT corporativo
+    # estoura esse limite.
+    - name: Gerar latest.json
+      run: |
+        $zip = (Get-ChildItem "dist\NebulaTIR_*.zip")[0].FullName
+        python scripts/gerar_latest_json.py --tag "${{ steps.version.outputs.VERSION }}" --zip "$zip" --saida "dist\latest.json"
+        Get-Content "dist\latest.json"
+
+    - name: Publicar latest.json na vitrine
+      env:
+        RELEASE_REPO_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+      run: python scripts/publicar_latest_json.py --arquivo "dist\latest.json" --tag "${{ steps.version.outputs.VERSION }}"
+
+    # ─────────────────────────────────────────────────────────────
+    # Mantém apenas o .zip da versão recém-publicada.
+    #
+    # Cada release guardava seu próprio pacote, e a lista só crescia. Aqui os
+    # ANEXOS das releases anteriores são apagados; a release, as notas e a tag
+    # continuam — quem precisar do binário de uma versão antiga reconstrói a
+    # partir da tag.
+    #
+    # Não derruba o pipeline se falhar: a release já saiu, e limpeza é
+    # acessório.
+    # ─────────────────────────────────────────────────────────────
+    - name: Limpar anexos das releases anteriores
+      if: success()
+      continue-on-error: true
+      env:
+        TOKEN_PRIVADO: ${{ secrets.GITHUB_TOKEN }}
+        TOKEN_PUBLICO: ${{ secrets.RELEASE_REPO_TOKEN }}
+        VERSAO_ATUAL: ${{ steps.version.outputs.VERSION }}
+      run: |
+        function Limpar-Anexos($repo, $token, $manter) {
+          if (-not $token) {
+            Write-Host "[$repo] sem token — ignorado."
+            return
+          }
+          $env:GH_TOKEN = $token
+          Write-Host "[$repo] mantendo apenas os anexos de $manter"
+          # --jq filtra por página: evita concatenar JSON de várias páginas.
+          $ids = gh api "repos/$repo/releases" --paginate `
+                   --jq ".[] | select(.tag_name != `"$manter`") | .assets[].id"
+          if (-not $ids) {
+            Write-Host "[$repo] nada a remover."
+            return
+          }
+          foreach ($id in $ids) {
+            if (-not $id) { continue }
+            gh api -X DELETE "repos/$repo/releases/assets/$id" | Out-Null
+            Write-Host "[$repo] anexo $id removido."
+          }
+        }
+
+        Limpar-Anexos "${{ github.repository }}" $env:TOKEN_PRIVADO $env:VERSAO_ATUAL
+        Limpar-Anexos "vromarquestester/NebulaTIR-Releases" $env:TOKEN_PUBLICO $env:VERSAO_ATUAL
+
+    # Nunca derruba o pipeline: a release já saiu quando isto roda.
+    - name: Notificar Google Chat
+      if: success()
+      continue-on-error: true
+      env:
+        GCHAT_WEBHOOK_URL: ${{ secrets.GCHAT_WEBHOOK_URL }}
+      run: python scripts/notificar_chat.py --tag "${{ steps.version.outputs.VERSION }}"
+
+    # O acumulador volta ao esqueleto. Sem isto a versão seguinte anunciaria de
+    # novo o que esta já anunciou. O histórico não se perde: o mesmo texto foi
+    # para o corpo da release, que é permanente.
+    #
+    # `[skip ci]` evita que este commit dispare o workflow de testes.
+    - name: Zerar changelog pendente
+      if: success()
+      continue-on-error: true
+      run: |
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git fetch origin main
+        git checkout -B main origin/main
+        python scripts/changelog.py --zerar
+        $mudou = git status --porcelain changelog_pendente.txt
+        if (-not $mudou) {
+          Write-Host "changelog_pendente.txt já estava vazio — nada a commitar."
+          exit 0
+        }
+        git add changelog_pendente.txt
+        git commit -m "chore: zera o changelog pendente apos ${{ steps.version.outputs.VERSION }} [skip ci]"
+        git push origin main
