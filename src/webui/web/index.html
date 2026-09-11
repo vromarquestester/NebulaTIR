@@ -53,6 +53,11 @@
       <!-- Espelho somente-leitura: quem troca a conexão é o Gerenciador. -->
       <span class="conexao-espelho mono" id="conexao-ativa" title="Definida no Gerenciador de Ambientes">—</span>
       <span class="badge" id="badge-op" hidden></span>
+      <!-- Caminho permanente para a atualização: o chip só aparece com
+           pendência, e sem ele não havia como verificar à mão. -->
+      <button type="button" class="btn btn-ghost" id="btn-atualizacao" title="Verificar atualizações">
+        <span aria-hidden="true">⇪</span> Atualização
+      </button>
     </div>
   </header>
 
@@ -608,8 +613,8 @@
              "Verificar agora" continua valendo. -->
         <p class="hint">
           Com isto desligado, nada é baixado sozinho — mas você ainda pode
-          verificar a qualquer momento. A troca sempre acontece na próxima
-          abertura do programa.
+          verificar a qualquer momento. A troca acontece ao reiniciar o
+          programa, com ele fechado.
         </p>
       </div>
 
@@ -622,6 +627,9 @@
         </button>
         <button type="button" class="btn btn-primary" id="btn-upd-baixar" hidden>
           Baixar
+        </button>
+        <button type="button" class="btn btn-primary" id="btn-upd-reiniciar" hidden>
+          Reiniciar agora
         </button>
       </div>
     </div>

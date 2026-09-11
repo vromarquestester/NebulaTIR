@@ -645,3 +645,27 @@ def test_registrar_verificacao_persiste(tmp_path):
     prefs.registrar_verificacao("2026-09-02T18:00:00+00:00")
     assert Preferencias(tmp_path / "preferencias.json") \
         .atualizacao_ultima_verificacao == "2026-09-02T18:00:00+00:00"
+
+
+# ── Reiniciar agora ─────────────────────────────────────────
+class _Janela:
+    def __init__(self):
+        self.destruida = 0
+
+    def destroy(self):
+        self.destruida += 1
+
+
+def test_fechar_janela_destroi_sem_pedir_reinicio(api):
+    janela = _Janela()
+    api._set_window(janela)
+    assert api.fechar_janela() == {"ok": True}
+    assert janela.destruida == 1
+    assert api.reinicio_pedido() is False
+
+
+def test_reiniciar_agora_marca_o_reinicio(api):
+    # O relançamento em si é do main_web.py, depois que a janela fechou.
+    api._set_window(_Janela())
+    api.fechar_janela(True)
+    assert api.reinicio_pedido() is True

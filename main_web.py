@@ -52,7 +52,7 @@ def main() -> None:
     #
     # O `.spec` marca `uac_admin=True`, então já estamos elevados aqui e a
     # escrita na pasta do programa passa.
-    from services.atualizacao import preparar_partida, relancar  # noqa: E402
+    from services.atualizacao import preparar_partida, reiniciar, relancar  # noqa: E402
     from services.canal import NOME_EXE  # noqa: E402
     from services.preferencias import BASE_DIR  # noqa: E402
 
@@ -88,6 +88,11 @@ def main() -> None:
                       **({"icon": icone} if icone else {}))
     finally:
         api._encerrar()
+
+    # "Reiniciar agora": com a janela fechada e os monitores parados, aplica o
+    # que estiver em espera e relança.
+    if api.reinicio_pedido():
+        reiniciar(BASE_DIR, NOME_EXE)
 
 
 if __name__ == "__main__":

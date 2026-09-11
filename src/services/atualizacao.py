@@ -17,10 +17,20 @@ achando que atualizou.
 Estrutura em disco, ao lado do executável::
 
     NebulaTIR.exe
-    NebulaTIR.exe.old      versão anterior, para reverter
     update/
         pendente.json                 o que está em espera
         NebulaTIR.exe.new  o binário já baixado e conferido
+        NebulaTIR.exe.old  versão anterior, para reverter
+
+O `.old` mora dentro de `update/`, e não ao lado do `.exe`: na pasta do
+programa ele parecia um arquivo estranho que apareceu do nada. Renomear o
+executável em uso para outra pasta do mesmo volume é o mesmo `rename` — o
+Windows aceita; o que ele recusa é apagar ou sobrescrever.
+
+Ele fica lá até a atualização seguinte o substituir. Apagá-lo na abertura
+seguinte, como era antes, nunca deixava janela para o "Voltar à versão
+anterior": o processo que troca relança e sai em seguida, e o filho chega à
+limpeza com o pai já morto — o `.old` sumia segundos depois de nascer.
 
 Regras que atravessam o módulo:
 
@@ -31,8 +41,16 @@ Regras que atravessam o módulo:
   signing: sem conferir o hash publicado pelo pipeline, atualização automática
   seria execução de binário arbitrário baixado da internet. Zip que não bate é
   descartado, nunca instalado.
-- **Nada é trocado sem o usuário reabrir o programa.** A troca acontece na
-  partida, antes da janela subir.
+- **Nada é trocado com a janela aberta.** A troca acontece na partida, antes
+  da janela subir, ou na saída, quando o usuário pede "Reiniciar agora" — nos
+  dois casos sem ninguém usando o programa.
+
+Relançar exige limpar o ambiente do PyInstaller. O bootloader (onefile) deixa
+`_PYI_*` no ambiente do processo, e a partir do PyInstaller 6.9 o executável
+que nasce com essas variáveis se trata como filho e exige que o processo pai
+seja o mesmo binário — o pai aqui é o `.old` recém-renomeado, e o filho morria
+com "Security validation failure: parent process has different executable".
+`PYINSTALLER_RESET_ENVIRONMENT=1` é a saída oficial para reinício de aplicação.
 """
 
 from __future__ import annotations
@@ -65,7 +83,11 @@ ARQUIVO_PENDENTE = "pendente.json"
 SUFIXO_NOVO = ".new"
 SUFIXO_ANTIGO = ".old"
 
-INTERVALO_VERIFICACAO = timedelta(hours=24)
+# De hora em hora, não uma vez por dia: versão publicada de manhã só chegava na
+# estação no dia seguinte. A verificação é uma requisição HTTP a um arquivo de
+# poucos KB no `raw` do GitHub — nenhum processo é criado, nenhuma janela
+# aparece, e não há custo que justifique esperar 24 h.
+INTERVALO_VERIFICACAO = timedelta(hours=1)
 TIMEOUT_MANIFESTO = 15
 TIMEOUT_DOWNLOAD = 300
 CHUNK = 262144
@@ -354,7 +376,7 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
 
     novo = pasta_update(base_dir) / f"{nome_exe}{SUFIXO_NOVO}"
     atual = base_dir / nome_exe
-    antigo = base_dir / f"{nome_exe}{SUFIXO_ANTIGO}"
+    antigo = caminho_antigo(base_dir, nome_exe)
 
     if not novo.exists() or not atual.exists():
         log.warning("[UPD] pendente sem arquivo — descartado.")
@@ -402,26 +424,30 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
     return atual
 
 
-def limpar_antigo(base_dir: Path, nome_exe: str) -> bool:
-    """Apaga o `.old`. Só funciona depois que a versão nova já subiu uma vez.
+def caminho_antigo(base_dir: Path, nome_exe: str) -> Path:
+    """Onde a versão anterior fica guardada: `update/<exe>.old`."""
+    return pasta_update(base_dir) / f"{nome_exe}{SUFIXO_ANTIGO}"
 
-    No run em que a troca acontece o `.old` ainda está mapeado pelo processo em
-    execução, e o Windows recusa a exclusão. Por isso a limpeza é sempre da
-    abertura seguinte.
+
+def limpar_antigo(base_dir: Path, nome_exe: str) -> bool:
+    """Recolhe o `.old` **ao lado do `.exe`** — o lugar visível, onde as versões
+    até a 2.7.2 o deixavam. Quem sai de uma delas ainda o encontra lá na
+    primeira abertura. O `.old` de `update/` não é tocado: ele é o "Voltar à
+    versão anterior", e só a atualização seguinte o substitui.
     """
-    antigo = Path(base_dir) / f"{nome_exe}{SUFIXO_ANTIGO}"
-    if not antigo.exists():
+    legado = Path(base_dir) / f"{nome_exe}{SUFIXO_ANTIGO}"
+    if not legado.exists():
         return False
     try:
-        antigo.unlink()
-        log.info("[UPD] %s removido.", antigo.name)
+        legado.unlink()
+        log.info("[UPD] %s removido da pasta do programa.", legado.name)
         return True
     except OSError:
-        return False
+        return False           # ainda mapeado por um processo que está saindo
 
 
 def pode_reverter(base_dir: Path, nome_exe: str) -> bool:
-    return (Path(base_dir) / f"{nome_exe}{SUFIXO_ANTIGO}").exists()
+    return caminho_antigo(base_dir, nome_exe).exists()
 
 
 def reverter(base_dir: Path, nome_exe: str) -> bool:
@@ -433,11 +459,11 @@ def reverter(base_dir: Path, nome_exe: str) -> bool:
     """
     base_dir = Path(base_dir)
     atual = base_dir / nome_exe
-    antigo = base_dir / f"{nome_exe}{SUFIXO_ANTIGO}"
+    antigo = caminho_antigo(base_dir, nome_exe)
     if not antigo.exists():
         return False
 
-    intermediario = base_dir / f"{nome_exe}.revertendo"
+    intermediario = pasta_update(base_dir) / f"{nome_exe}.revertendo"
     try:
         intermediario.unlink(missing_ok=True)
         atual.rename(intermediario)
@@ -450,20 +476,66 @@ def reverter(base_dir: Path, nome_exe: str) -> bool:
     return True
 
 
-def relancar(caminho_exe: Path) -> None:
+VARIAVEL_RESET_PYINSTALLER = "PYINSTALLER_RESET_ENVIRONMENT"
+PREFIXO_AMBIENTE_PYINSTALLER = "_PYI_"
+
+
+def ambiente_para_relancar(ambiente: dict | None = None) -> dict:
+    """Ambiente do filho: sem `_PYI_*` e com o reset pedido ao bootloader.
+
+    Só o reset bastaria a partir do PyInstaller 6.22.1; tirar as variáveis
+    também cobre bootloader mais velho, que não conhece o pedido e trataria o
+    filho como subprocesso deste — exatamente o que dispara a validação.
+    """
+    base = os.environ if ambiente is None else ambiente
+    limpo = {chave: valor for chave, valor in base.items()
+             if not chave.startswith(PREFIXO_AMBIENTE_PYINSTALLER)}
+    limpo[VARIAVEL_RESET_PYINSTALLER] = "1"
+    return limpo
+
+
+def relancar(caminho_exe: Path) -> bool:
     """Sobe o executável novo e deixa este processo terminar.
 
     Já estamos elevados quando isto roda, então o filho herda a elevação sem
-    passar de novo pelo UAC.
+    passar de novo pelo UAC. O ambiente vai limpo — ver o cabeçalho do módulo.
     """
     try:
-        subprocess.Popen([str(caminho_exe)], close_fds=True)
+        subprocess.Popen([str(caminho_exe)], close_fds=True,
+                         env=ambiente_para_relancar())
+        return True
     except OSError as erro:
         log.error("[UPD] não foi possível relançar: %s", erro)
+        return False
+
+
+def reiniciar(base_dir: Path, nome_exe: str) -> Path | None:
+    """Rotina de saída do "Reiniciar agora": aplica o que estiver em espera e
+    relança. Sem nada em espera, relança o executável como está.
+
+    Chamar depois que a janela fechou e nada mais do programa está de pé — a
+    troca renomeia o binário que este processo ainda executa, e ele precisa
+    terminar logo em seguida. Devolve o executável relançado, ou None quando
+    não deu para relançar (o programa simplesmente fecha).
+    """
+    if not getattr(sys, "frozen", False):
+        return None            # em desenvolvimento não há binário para relançar
+    base_dir = Path(base_dir)
+    try:
+        exe = aplicar_pendente(base_dir, nome_exe) or (base_dir / nome_exe)
+    except Exception:          # noqa: BLE001 — falha na troca não pode travar a saída
+        log.exception("[UPD] falha ao aplicar na saída; relançando como está.")
+        exe = base_dir / nome_exe
+    if not exe.exists():
+        log.error("[UPD] %s não existe — não há o que relançar.", exe)
+        return None
+    if not relancar(exe):
+        return None
+    return exe
 
 
 def preparar_partida(base_dir: Path, nome_exe: str) -> Path | None:
-    """Rotina de partida: limpa o `.old` e aplica o que estiver em espera.
+    """Rotina de partida: recolhe o `.old` legado e aplica o que estiver em espera.
 
     Devolve o executável a relançar quando trocou, ou None para seguir a
     abertura normal. Nunca levanta: falha aqui não pode impedir o programa de
@@ -526,6 +598,10 @@ class Atualizador:
         self._manifesto: Manifesto | None = None
         self._progresso = 0
         self._thread: threading.Thread | None = None
+        # Laço periódico (`monitorar`), separado da `_thread` de uma verificação
+        # avulsa para os dois não disputarem o mesmo guarda.
+        self._monitor: threading.Thread | None = None
+        self._parar_monitor = threading.Event()
 
     # ── leitura para a interface ──
 
@@ -698,6 +774,58 @@ class Atualizador:
         self._thread = threading.Thread(target=tarefa, daemon=True,
                                         name="atualizacao")
         self._thread.start()
+
+    def monitorar(self, intervalo: timedelta = INTERVALO_VERIFICACAO) -> None:
+        """Repete a verificação enquanto o programa estiver aberto.
+
+        Até 2026-09-04 só havia a checagem da partida: quem deixa o programa
+        aberto o dia inteiro — que é o uso normal — nunca via versão publicada
+        depois de abrir a janela.
+
+        Roda em thread daemon própria, separada da `_thread` de
+        `em_segundo_plano`, para não disputar aquele guarda de "já tem uma
+        rodando" e travar o botão "Verificar agora".
+
+        ⚠ Sem processo e sem janela: `consultar` é `urllib` puro. A verificação
+        nunca dispara `subprocess` — o único `Popen` deste módulo é o relançar
+        do executável, que só acontece ao aplicar a troca.
+
+        Falha é silenciosa por decisão: rede corporativa, proxy e VPN caem o
+        tempo todo, e um alarme a cada hora seria ruído para algo que não é
+        problema do usuário. Fica no log, e a hora seguinte tenta de novo.
+        """
+        # Piso de 60 s: intervalo minúsculo por engano viraria laço quente
+        # batendo no GitHub sem parar.
+        segundos = max(60.0, intervalo.total_seconds())
+
+        def laco():
+            while not self._parar_monitor.wait(segundos):
+                self._rodada_periodica()
+
+        if self._monitor and self._monitor.is_alive():
+            return
+        self._monitor = threading.Thread(target=laco, daemon=True,
+                                         name="atualizacao-monitor")
+        self._monitor.start()
+
+    def _rodada_periodica(self) -> None:
+        """Uma passada do laço. Separado do `monitorar` para ser testável.
+
+        Nunca levanta: exceção aqui mataria a thread e o programa passaria o
+        resto do dia sem verificar, em silêncio.
+        """
+        if not self.config.automatica:
+            return                     # desligado: só volta a dormir
+        try:
+            estado = self.verificar()
+            if estado["estado"] == DISPONIVEL:
+                self.baixar()
+        except Exception:              # noqa: BLE001
+            log.debug("[UPD] verificação periódica falhou.", exc_info=True)
+
+    def parar_monitor(self) -> None:
+        """Acorda o laço para ele sair. Usado no fechamento e nos testes."""
+        self._parar_monitor.set()
 
     def descartar(self) -> dict:
         """Joga fora o que está em espera (o usuário recusou)."""

@@ -389,3 +389,12 @@ def test_desligar_o_automatico_nao_esconde_o_verificar_agora():
     assert 'id="btn-upd-verificar"' in HTML
     trecho = JS.split("$('#btn-upd-verificar').disabled =")[1][:120]
     assert "verificando" in trecho and "baixando" in trecho
+
+
+def test_atualizacao_tem_caminho_permanente_e_reinicio():
+    # O chip só aparece com pendência; sem um botão fixo não havia como
+    # verificar à mão. E a versão baixada se aplica sem sair e abrir de novo.
+    assert 'id="btn-atualizacao"' in HTML
+    assert 'id="btn-upd-reiniciar"' in HTML
+    assert "$('#btn-atualizacao').addEventListener('click', abrirAtualizacao)" in JS
+    assert "api.fechar_janela(true)" in JS

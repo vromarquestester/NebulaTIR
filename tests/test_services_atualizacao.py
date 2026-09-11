@@ -221,8 +221,10 @@ def test_aplicar_troca_e_guarda_o_anterior(instalado):
     assert devolvido == instalado / NOME_EXE
     assert (instalado / NOME_EXE).read_bytes() == b"binario novo"
     # O anterior fica para o "Reverter atualização" — não dá para detectar de
-    # dentro da versão nova que ela mesma quebrou.
-    assert (instalado / f"{NOME_EXE}.old").read_bytes() == b"binario velho"
+    # dentro da versão nova que ela mesma quebrou. Fica em `update/`, fora da
+    # vista: na pasta do programa parecia um arquivo estranho.
+    assert (instalado / "update" / f"{NOME_EXE}.old").read_bytes() == b"binario velho"
+    assert not (instalado / f"{NOME_EXE}.old").exists()
     assert upd.ler_pendente(instalado) is None
 
 
@@ -258,19 +260,41 @@ def test_reverter_troca_os_dois_de_lugar(instalado):
     assert upd.reverter(instalado, NOME_EXE) is True
     assert (instalado / NOME_EXE).read_bytes() == b"binario velho"
     # E dá para desfazer a reversão: o novo virou o `.old`.
-    assert (instalado / f"{NOME_EXE}.old").read_bytes() == b"binario novo"
+    assert (instalado / "update" / f"{NOME_EXE}.old").read_bytes() == b"binario novo"
+    assert not (instalado / "update" / f"{NOME_EXE}.revertendo").exists()
 
 
 def test_reverter_sem_anterior_devolve_falso(instalado):
     assert upd.reverter(instalado, NOME_EXE) is False
 
 
-def test_limpar_antigo_so_depois_que_ele_existe(instalado):
+def test_limpar_antigo_preserva_a_versao_anterior(instalado):
+    # O `.old` de `update/` é o "Voltar à versão anterior": a partida não o
+    # apaga. Só a atualização seguinte o substitui.
     assert upd.limpar_antigo(instalado, NOME_EXE) is False
     _deixar_em_espera(instalado)
     upd.aplicar_pendente(instalado, NOME_EXE)
+    assert upd.limpar_antigo(instalado, NOME_EXE) is False
+    assert (instalado / "update" / f"{NOME_EXE}.old").read_bytes() == b"binario velho"
+    assert upd.pode_reverter(instalado, NOME_EXE) is True
+
+
+def test_atualizacao_seguinte_substitui_a_versao_anterior(instalado):
+    _deixar_em_espera(instalado, b"binario novo", "2.7.3")
+    upd.aplicar_pendente(instalado, NOME_EXE)
+    _deixar_em_espera(instalado, b"binario mais novo", "2.7.4")
+    upd.aplicar_pendente(instalado, NOME_EXE)
+    assert (instalado / NOME_EXE).read_bytes() == b"binario mais novo"
+    assert (instalado / "update" / f"{NOME_EXE}.old").read_bytes() == b"binario novo"
+
+
+def test_limpar_antigo_recolhe_o_old_das_versoes_anteriores(instalado):
+    # Até a 2.7.2 o `.old` ficava ao lado do `.exe`. Quem sai de uma delas
+    # ainda o encontra lá na primeira abertura.
+    legado = instalado / f"{NOME_EXE}.old"
+    legado.write_bytes(b"binario de antes")
     assert upd.limpar_antigo(instalado, NOME_EXE) is True
-    assert not (instalado / f"{NOME_EXE}.old").exists()
+    assert not legado.exists()
 
 
 def test_preparar_partida_nao_troca_em_desenvolvimento(instalado, monkeypatch):
@@ -294,6 +318,77 @@ def test_preparar_partida_engole_qualquer_falha(instalado, monkeypatch):
 
 
 # =============================================================
+# RELANÇAR
+# =============================================================
+
+def test_ambiente_do_relancamento_sai_sem_as_variaveis_do_pyinstaller():
+    # O bootloader deixa `_PYI_*` no ambiente; herdado pelo filho, ele se trata
+    # como subprocesso deste e exige o mesmo executável no pai — que é o
+    # `.old`. Era o "Security validation failure" depois de atualizar.
+    ambiente = {
+        "PATH": "C:\\x",
+        "_PYI_ARCHIVE_FILE": "a",
+        "_PYI_PARENT_PROCESS_LEVEL": "1",
+        "_PYI_APPLICATION_HOME_DIR": "b",
+    }
+    limpo = upd.ambiente_para_relancar(ambiente)
+    assert limpo == {"PATH": "C:\\x", "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+    assert "_PYI_ARCHIVE_FILE" in ambiente            # o original fica intacto
+
+
+def test_relancar_passa_o_ambiente_limpo(monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(upd.subprocess, "Popen",
+                        lambda args, **kw: chamadas.append((args, kw)))
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+
+    assert upd.relancar(Path("C:/x/app.exe")) is True
+    (args, kw), = chamadas
+    assert args == ["C:\\x\\app.exe"]
+    assert "_PYI_PARENT_PROCESS_LEVEL" not in kw["env"]
+    assert kw["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
+def test_reiniciar_aplica_o_pendente_e_relanca_o_novo(instalado, monkeypatch):
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    relancados = []
+    monkeypatch.setattr(upd, "relancar", lambda exe: relancados.append(exe) or True)
+    _deixar_em_espera(instalado)
+
+    assert upd.reiniciar(instalado, NOME_EXE) == instalado / NOME_EXE
+    assert relancados == [instalado / NOME_EXE]
+    assert (instalado / NOME_EXE).read_bytes() == b"binario novo"
+    assert upd.ler_pendente(instalado) is None
+
+
+def test_reiniciar_sem_pendente_relanca_como_esta(instalado, monkeypatch):
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    relancados = []
+    monkeypatch.setattr(upd, "relancar", lambda exe: relancados.append(exe) or True)
+
+    assert upd.reiniciar(instalado, NOME_EXE) == instalado / NOME_EXE
+    assert relancados == [instalado / NOME_EXE]
+    assert (instalado / NOME_EXE).read_bytes() == b"binario velho"
+
+
+def test_reiniciar_com_troca_quebrada_relanca_a_versao_que_estava(instalado, monkeypatch):
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    monkeypatch.setattr(upd, "aplicar_pendente",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    relancados = []
+    monkeypatch.setattr(upd, "relancar", lambda exe: relancados.append(exe) or True)
+
+    assert upd.reiniciar(instalado, NOME_EXE) == instalado / NOME_EXE
+    assert relancados == [instalado / NOME_EXE]
+
+
+def test_reiniciar_em_desenvolvimento_nao_faz_nada(instalado, monkeypatch):
+    monkeypatch.delattr("sys.frozen", raising=False)
+    monkeypatch.setattr(upd, "relancar", lambda exe: pytest.fail("não relança em dev"))
+    assert upd.reiniciar(instalado, NOME_EXE) is None
+
+
+# =============================================================
 # THROTTLE
 # =============================================================
 
@@ -311,6 +406,96 @@ def test_verificacao_recente_nao_repete(instalado):
     a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
                         upd.ConfigAtualizacao(ultima_verificacao=agora))
     assert a.deve_verificar() is False
+
+
+def test_intervalo_e_de_uma_hora():
+    """Versão publicada de manhã chegava na estação só no dia seguinte."""
+    from datetime import timedelta
+    assert upd.INTERVALO_VERIFICACAO == timedelta(hours=1)
+
+
+def test_verificacao_de_duas_horas_atras_repete(instalado):
+    from datetime import datetime, timedelta, timezone
+    passado = (datetime.now(timezone.utc) - timedelta(hours=2)) \
+        .isoformat(timespec="seconds")
+    a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
+                        upd.ConfigAtualizacao(ultima_verificacao=passado))
+    assert a.deve_verificar() is True
+
+
+# =============================================================
+# MONITOR PERIÓDICO
+# =============================================================
+# Até 2026-09-04 só havia a checagem da partida: quem deixa o Gerenciador
+# aberto o dia inteiro — o uso normal — nunca via versão publicada depois de a
+# janela abrir.
+
+def test_rodada_baixa_quando_ha_versao_nova(instalado, monkeypatch):
+    a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
+                        upd.ConfigAtualizacao())
+    monkeypatch.setattr(upd, "consultar",
+                        lambda url, timeout=15: upd.Manifesto.de_dados(
+                            _manifesto_dict("2.7.0")))
+    baixou = []
+    monkeypatch.setattr(a, "baixar", lambda: baixou.append(True))
+
+    a._rodada_periodica()
+
+    assert baixou == [True]
+
+
+def test_rodada_nao_faz_nada_com_o_automatico_desligado(instalado, monkeypatch):
+    a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
+                        upd.ConfigAtualizacao(automatica=False))
+    monkeypatch.setattr(upd, "consultar",
+                        lambda url, timeout=15: pytest.fail(
+                            "não pode consultar com o automático desligado"))
+
+    a._rodada_periodica()
+
+
+def test_falha_periodica_nao_propaga(instalado, monkeypatch):
+    """Exceção aqui mataria a thread e o dia inteiro passaria sem verificar."""
+    a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
+                        upd.ConfigAtualizacao())
+    monkeypatch.setattr(a, "verificar",
+                        lambda forcado=False: (_ for _ in ()).throw(
+                            RuntimeError("proxy recusou")))
+
+    a._rodada_periodica()      # não pode levantar
+
+
+def test_monitor_sobe_uma_vez_so_e_para_quando_mandam(instalado):
+    a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
+                        upd.ConfigAtualizacao())
+    try:
+        a.monitorar()
+        primeiro = a._monitor
+        a.monitorar()
+        assert a._monitor is primeiro, "duas threads verificariam em dobro"
+    finally:
+        a.parar_monitor()
+    a._monitor.join(timeout=5)
+    assert not a._monitor.is_alive()
+
+
+def test_monitor_tem_piso_de_intervalo(instalado, monkeypatch):
+    """Intervalo minúsculo por engano viraria laço quente batendo no GitHub."""
+    from datetime import timedelta
+    esperas = []
+
+    class _EventoEspiao(upd.threading.Event):
+        def wait(self, timeout=None):
+            esperas.append(timeout)
+            return True               # sai do laço na primeira volta
+
+    a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
+                        upd.ConfigAtualizacao())
+    a._parar_monitor = _EventoEspiao()
+    a.monitorar(timedelta(seconds=1))
+    a._monitor.join(timeout=5)
+
+    assert esperas and esperas[0] >= 60
 
 
 def test_desligado_nao_verifica_sozinho_mas_aceita_forcado(instalado, monkeypatch):

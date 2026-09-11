@@ -100,12 +100,18 @@ class Api:
                          "recusadas": []}
 
         self._atualizador = self._montar_atualizador()
+        # "Reiniciar agora": o `main_web.py` lê depois que a janela fechou e
+        # relança o executável (aplicando a atualização em espera, se houver).
+        self._reiniciar = False
 
         if iniciar_monitores:
             self._estado.iniciar()
             # Verifica e baixa em espera sem travar a janela. Thread daemon:
             # morre com o processo, e nada aqui merece segurar o fechamento.
             self._atualizador.em_segundo_plano()
+            # E repete de hora em hora: quem deixa o programa aberto o dia
+            # inteiro nunca via versão publicada depois de a janela abrir.
+            self._atualizador.monitorar()
 
     # ── ciclo de vida (privados: não vão para o JS) ──
     def _set_window(self, janela) -> None:
@@ -113,6 +119,21 @@ class Api:
 
     def _encerrar(self) -> None:
         self._estado.parar()
+        self._atualizador.parar_monitor()
+
+    def reinicio_pedido(self) -> bool:
+        """Lido pelo `main_web.py` depois que a janela fechou."""
+        return self._reiniciar
+
+    def fechar_janela(self, reiniciar: bool = False) -> dict:
+        """Fecha a janela. `reiniciar=True` é o "Reiniciar agora" da
+        atualização: o programa volta sozinho depois de fechar, já na versão
+        baixada — a troca em si é do `main_web.py`, com a janela fechada.
+        """
+        self._reiniciar = bool(reiniciar)
+        if self._window is not None:
+            self._window.destroy()
+        return {"ok": True}
 
     # ─────────────────────────────────────────────────────────
     # ATUALIZAÇÃO AUTOMÁTICA
@@ -157,15 +178,16 @@ class Api:
         return {"ok": True, "atualizacao": self._atualizador.descartar()}
 
     def atualizacao_reverter(self) -> dict:
-        """Volta para a versão anterior. Só vale até o `.old` ser apagado.
+        """Volta para a versão anterior guardada em `update/`. Vale até a
+        atualização seguinte substituí-la.
 
         A troca acontece agora, mas quem está rodando é o binário que já foi
-        renomeado — a versão anterior só aparece na próxima abertura.
+        renomeado — a versão anterior só aparece quando o programa reiniciar.
         """
         if not _atualizacao.reverter(BASE_DIR, NOME_EXE):
             return {"ok": False, "erro": "Não há versão anterior para voltar."}
         return {"ok": True,
-                "mensagem": "Feche e abra o programa para voltar à versão anterior."}
+                "mensagem": "A versão anterior entra quando o programa reiniciar."}
 
     def atualizacao_configurar(self, automatica=None, incluir_prerelease=None) -> dict:
         """Liga/desliga o automático. Desligado, o "Verificar agora" continua."""

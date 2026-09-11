@@ -26,3 +26,8 @@
 - O programa verifica sozinho se ha versao nova, baixa em espera e troca na proxima abertura.
 - Atualizacao automatica pode ser desligada; "Verificar agora" continua valendo com ela desligada.
 - Da para voltar a versao anterior enquanto a copia antiga estiver no disco.
+- Corrigido: depois de atualizar, o programa reabria com "Security validation failure: parent process has different executable" e era preciso abrir de novo a mao.
+- Botao "Atualizacao" fixo na barra: da para verificar a qualquer momento, mesmo sem aviso pendente.
+- Botao "Reiniciar agora" quando a versao nova ja esta baixada: fecha, aplica e reabre sozinho.
+- A copia da versao anterior fica guardada dentro de update/, fora da pasta do programa, e continua servindo para o "Voltar a versao anterior".
+- A verificacao de versao nova passou a repetir de hora em hora enquanto o programa esta aberto.

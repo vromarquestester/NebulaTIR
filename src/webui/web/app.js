@@ -898,7 +898,7 @@ function pintarModalUpdate(extra) {
     'em-dia':    'Você está na versão mais recente.',
     disponivel:  'Há uma versão nova. Baixe para instalar na próxima abertura.',
     baixando:    'Baixando…',
-    pronto:      'Baixada. Feche e abra o programa para aplicar.',
+    pronto:      'Baixada. Reinicie o programa para aplicar.',
   };
   // Erro traz a causa junto (proxy, hash divergente, versão mínima) — é o
   // texto que diz o que fazer, e engoli-lo viraria "não atualiza e não diz".
@@ -920,6 +920,7 @@ function pintarModalUpdate(extra) {
 
   $('#chk-upd-auto').checked = u.automatica !== false;
   $('#btn-upd-baixar').hidden = u.estado !== 'disponivel';
+  $('#btn-upd-reiniciar').hidden = u.estado !== 'pronto';
   $('#btn-upd-verificar').disabled = u.estado === 'verificando'
                                   || u.estado === 'baixando';
   $('#btn-upd-reverter').hidden = u.pode_reverter !== true;
@@ -1579,6 +1580,7 @@ function ligarEventos() {
 
   // ── atualização do programa ──
   $('#chip-update').addEventListener('click', abrirAtualizacao);
+  $('#btn-atualizacao').addEventListener('click', abrirAtualizacao);
   $('#btn-fechar-upd').addEventListener('click',
     () => fecharModal('overlay-atualizacao'));
 
@@ -1592,6 +1594,9 @@ function ligarEventos() {
     await atualizarUpdate();
   });
 
+  // Fecha a janela; o main_web.py aplica a versão baixada e relança.
+  $('#btn-upd-reiniciar').addEventListener('click', () => api.fechar_janela(true));
+
   $('#chk-upd-auto').addEventListener('change', async (ev) => {
     await api.atualizacao_configurar(ev.target.checked, null);
     await atualizarUpdate();
@@ -1600,9 +1605,11 @@ function ligarEventos() {
   $('#btn-upd-reverter').addEventListener('click', async () => {
     const r = await api.atualizacao_reverter();
     // A troca já aconteceu em disco, mas quem está rodando é o binário
-    // renomeado: a versão anterior só aparece na próxima abertura.
+    // renomeado: a versão anterior só aparece quando o programa reiniciar —
+    // e o botão de reiniciar fica à mão para isso.
     await atualizarUpdate();
     pintarModalUpdate(r.ok ? r.mensagem : r.erro);
+    if (r.ok) $('#btn-upd-reiniciar').hidden = false;
   });
 
   $('#btn-importar').addEventListener('click', abrirImportar);
