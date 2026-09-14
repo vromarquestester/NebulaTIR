@@ -94,6 +94,9 @@ def versoes(monkeypatch):
     tabela = {IRMA.exe: "2.7.2"}
     monkeypatch.setattr(upd, "versao_do_exe",
                         lambda caminho: tabela.get(Path(caminho).name))
+    # A irmã é dada como ABERTA (`_exe_em_uso` True); a troca por fora tem
+    # testes próprios.
+    monkeypatch.setattr(upd, "_exe_em_uso", lambda caminho: True)
     return tabela
 
 
@@ -294,7 +297,7 @@ def test_catalogo_e_o_canal_concordam():
     assert len(fam.irmas(canal.NOME_EXE)) == len(fam.FERRAMENTAS) - 1
 
 
-def test_irma_desatualizada_e_baixada_com_o_nome_dela(instalado, tmp_path, monkeypatch, versoes):
+def test_irma_aberta_fica_com_o_pendente_e_aplica_na_partida_dela(instalado, tmp_path, monkeypatch, versoes):
     zipado = tmp_path / "g.zip"
     sha = _zip_com(zipado, IRMA.exe, b"gerenciador novo")
     _servidor(monkeypatch, {"u": _manifesto("0.2.0"),
@@ -410,6 +413,129 @@ def test_versao_ilegivel_da_irma_nao_baixa(instalado, monkeypatch):
     [situacao] = a.verificar(forcado=True)["familia"]
     assert situacao["estado"] == upd.ERRO
     assert "versão" in situacao["mensagem"]
+
+
+def test_irma_fechada_e_trocada_na_hora(instalado, tmp_path, monkeypatch, versoes):
+    """Ninguém está rodando o binário, e uma irmã velha demais para ter
+    atualizador (o NebulaTIR 0.2.0 instalado) nunca aplicaria sozinha."""
+    monkeypatch.setattr(upd, "_exe_em_uso", lambda caminho: False)
+    zipado = tmp_path / "g.zip"
+    sha = _zip_com(zipado, IRMA.exe, b"gerenciador novo")
+    _servidor(monkeypatch, {"u": _manifesto("0.2.0"),
+                            IRMA.url_manifesto: _manifesto("2.8.0", IRMA.exe, sha)})
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0", upd.ConfigAtualizacao(),
+                        baixador=_baixador_de({f"https://exemplo/{IRMA.exe}/2.8.0": zipado}),
+                        irmas=(IRMA,))
+
+    [situacao] = a.verificar(forcado=True)["familia"]
+
+    assert situacao["estado"] == upd.ATUALIZADA
+    assert situacao["versao_atual"] == "2.8.0"
+    assert (instalado / IRMA.exe).read_bytes() == b"gerenciador novo"
+    assert (instalado / "update" / f"{IRMA.exe}.old").read_bytes() == b"gerenciador velho"
+    assert upd.ler_pendente(instalado, IRMA.exe) is None
+    assert (instalado / NOME_EXE).read_bytes() == b"nebula velho"
+
+
+def test_irma_que_fechou_depois_e_trocada_na_rodada_seguinte(instalado, tmp_path, monkeypatch, versoes):
+    zipado = tmp_path / "g.zip"
+    sha = _zip_com(zipado, IRMA.exe, b"gerenciador novo")
+    _servidor(monkeypatch, {"u": _manifesto("0.2.0"),
+                            IRMA.url_manifesto: _manifesto("2.8.0", IRMA.exe, sha)})
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0", upd.ConfigAtualizacao(),
+                        baixador=_baixador_de({f"https://exemplo/{IRMA.exe}/2.8.0": zipado}),
+                        irmas=(IRMA,))
+    assert a.verificar(forcado=True)["familia"][0]["estado"] == upd.PRONTO
+
+    monkeypatch.setattr(upd, "_exe_em_uso", lambda caminho: False)
+    monkeypatch.setattr(a, "_baixador", lambda *x, **k: pytest.fail("ja estava baixada"))
+    assert a.verificar(forcado=True)["familia"][0]["estado"] == upd.ATUALIZADA
+    assert (instalado / IRMA.exe).read_bytes() == b"gerenciador novo"
+
+
+def test_automatico_desligado_nao_troca_a_irma_por_fora(instalado, monkeypatch, versoes):
+    monkeypatch.setattr(upd, "_exe_em_uso", lambda caminho: False)
+    pasta = instalado / "update"
+    pasta.mkdir()
+    (pasta / f"{IRMA.exe}.new").write_bytes(b"gerenciador novo")
+    (pasta / f"{IRMA.exe}.pendente.json").write_text(json.dumps({
+        "versao": "2.8.0", "exe": IRMA.exe}), encoding="utf-8")
+    _servidor(monkeypatch, {"u": _manifesto("0.2.0"),
+                            IRMA.url_manifesto: _manifesto("2.8.0", IRMA.exe)})
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0",
+                        upd.ConfigAtualizacao(automatica=False), irmas=(IRMA,))
+    [situacao] = a.verificar(forcado=True)["familia"]
+    assert situacao["estado"] == upd.PRONTO
+    assert (instalado / IRMA.exe).read_bytes() == b"gerenciador velho"
+
+
+def test_instalar_irma_ausente_poe_o_exe_na_pasta(instalado, tmp_path, monkeypatch, versoes):
+    (instalado / IRMA.exe).unlink()
+    zipado = tmp_path / "g.zip"
+    sha = _zip_com(zipado, IRMA.exe, b"gerenciador novo")
+    _servidor(monkeypatch, {IRMA.url_manifesto: _manifesto("2.8.0", IRMA.exe, sha)})
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0", upd.ConfigAtualizacao(),
+                        baixador=_baixador_de({f"https://exemplo/{IRMA.exe}/2.8.0": zipado}),
+                        irmas=(IRMA,))
+
+    situacao = a.instalar_irma(IRMA.exe)
+
+    assert situacao["estado"] == upd.ATUALIZADA
+    assert situacao["versao_atual"] == "2.8.0"
+    assert (instalado / IRMA.exe).read_bytes() == b"gerenciador novo"
+    assert not (instalado / "update" / f"{IRMA.exe}.old").exists()   # nao havia anterior
+    assert upd.ler_pendente(instalado, IRMA.exe) is None
+    assert a.estado["familia"][0]["estado"] == upd.ATUALIZADA
+
+
+def test_instalar_irma_ja_instalada_e_recusado(instalado, monkeypatch, versoes):
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0", upd.ConfigAtualizacao(),
+                        baixador=lambda *x, **k: pytest.fail("nao pode baixar"),
+                        irmas=(IRMA,))
+    situacao = a.instalar_irma(IRMA.exe)
+    assert situacao["estado"] == upd.ERRO
+    assert "instalado" in situacao["mensagem"]
+
+
+def test_instalar_desconhecida_e_recusado(instalado):
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0", upd.ConfigAtualizacao())
+    assert a.instalar_irma("Outra.exe")["estado"] == upd.ERRO
+
+
+def test_instalar_com_hash_errado_nao_deixa_nada(instalado, tmp_path, monkeypatch, versoes):
+    (instalado / IRMA.exe).unlink()
+    zipado = tmp_path / "g.zip"
+    _zip_com(zipado, IRMA.exe, b"gerenciador novo")
+    _servidor(monkeypatch, {IRMA.url_manifesto: _manifesto("2.8.0", IRMA.exe, "f" * 64)})
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0", upd.ConfigAtualizacao(),
+                        baixador=_baixador_de({f"https://exemplo/{IRMA.exe}/2.8.0": zipado}),
+                        irmas=(IRMA,))
+    situacao = a.instalar_irma(IRMA.exe)
+    assert situacao["estado"] == upd.ERRO
+    assert not (instalado / IRMA.exe).exists()
+    assert not (instalado / "update" / f"{IRMA.exe}.new").exists()
+
+
+def test_aplicar_pendente_sem_exe_no_lugar_e_instalacao(instalado):
+    (instalado / IRMA.exe).unlink()
+    pasta = instalado / "update"
+    pasta.mkdir()
+    (pasta / f"{IRMA.exe}.new").write_bytes(b"novo")
+    (pasta / f"{IRMA.exe}.pendente.json").write_text(json.dumps({
+        "versao": "2.8.0", "exe": IRMA.exe,
+        "sha256_exe": hashlib.sha256(b"novo").hexdigest()}), encoding="utf-8")
+    assert upd.aplicar_pendente(instalado, IRMA.exe) == instalado / IRMA.exe
+    assert (instalado / IRMA.exe).read_bytes() == b"novo"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="executavel mapeado e coisa do Windows")
+def test_exe_em_uso_distingue_o_que_esta_rodando(tmp_path):
+    import sys
+    assert upd._exe_em_uso(Path(sys.executable)) is True
+    parado = tmp_path / "parado.exe"
+    parado.write_bytes(b"MZ")
+    assert upd._exe_em_uso(parado) is False
+    assert upd._exe_em_uso(tmp_path / "nao_existe.exe") is False
 
 
 @pytest.mark.skipif(os.name != "nt", reason="VS_VERSIONINFO é coisa do Windows")

@@ -936,6 +936,7 @@ const ROTULO_FAMILIA = {
   disponivel: 'versão nova (baixe pelo próprio programa)',
   baixando:   'baixando…',
   pronto:     'baixada — entra quando abrir',
+  atualizada: 'atualizada agora',
   erro:       'falhou',
 };
 

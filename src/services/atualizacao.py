@@ -54,9 +54,12 @@ Regras que atravessam o módulo:
   dois casos sem ninguém usando o programa.
 - **Quem verifica, verifica para a família inteira.** Cada rodada consulta o
   manifesto das irmãs instaladas na mesma pasta e deixa em espera o que estiver
-  desatualizado — a irmã aplica na própria partida. Quem manda no download é o
-  interruptor "automática" da ferramenta que detectou; a irmã fechada não tem
-  como opinar, e a aberta vê o pendente na rodada dela e avisa "reinicie".
+  desatualizado. Irmã **fechada** é trocada na hora, pela mesma coreografia de
+  renames (ninguém está rodando o binário); irmã **aberta** fica com o pendente
+  e aplica na própria partida — ou a rodada seguinte daqui a troca, se ela já
+  tiver fechado. Quem manda é o interruptor "automática" da ferramenta que
+  detectou. Isto cobre a irmã antiga demais para ter atualizador: ela é
+  trocada por fora. Irmã ausente pode ser instalada por `instalar_irma`.
 - **A verificação é barata de propósito.** GET condicional com `ETag`: o
   `raw` responde `304` sem corpo (~550 B de cabeçalho) enquanto nada mudou, e
   só entrega o JSON quando há versão nova. Falha de rede dobra o intervalo até
@@ -133,8 +136,10 @@ DISPONIVEL = "disponivel"
 BAIXANDO = "baixando"
 PRONTO = "pronto"
 ERRO = "erro"
-# Só para as irmãs (a própria ferramenta não pode estar ausente).
+# Só para as irmãs (a própria ferramenta não pode estar ausente, nem ser
+# trocada com o programa aberto).
 AUSENTE = "ausente"
+ATUALIZADA = "atualizada"
 
 
 class ErroAtualizacao(Exception):
@@ -464,7 +469,7 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
     atual = base_dir / nome_exe
     antigo = caminho_antigo(base_dir, nome_exe)
 
-    if not novo.exists() or not atual.exists():
+    if not novo.exists():
         log.warning("[UPD] pendente sem arquivo — descartado.")
         descartar_pendente(base_dir, nome_exe)
         return None
@@ -478,31 +483,37 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
         descartar_pendente(base_dir, nome_exe)
         return None
 
-    try:
-        antigo.unlink(missing_ok=True)
-    except OSError:
-        # Ainda mapeado por outro processo. Sem lugar para guardar a versão
-        # anterior, não se troca: ficar sem rollback é pior que adiar um dia.
-        log.warning("[UPD] não foi possível remover o %s anterior — adiado.",
-                    SUFIXO_ANTIGO)
-        return None
+    # Sem executável no lugar é instalação, não troca: nada a guardar como
+    # anterior. É o caminho de `instalar_irma`.
+    instalando = not atual.exists()
 
-    try:
-        atual.rename(antigo)
-    except OSError as erro:
-        log.error("[UPD] falha ao renomear o executável em uso: %s", erro)
-        return None
+    if not instalando:
+        try:
+            antigo.unlink(missing_ok=True)
+        except OSError:
+            # Ainda mapeado por outro processo. Sem lugar para guardar a versão
+            # anterior, não se troca: ficar sem rollback é pior que adiar.
+            log.warning("[UPD] não foi possível remover o %s anterior — adiado.",
+                        SUFIXO_ANTIGO)
+            return None
+
+        try:
+            atual.rename(antigo)
+        except OSError as erro:
+            log.error("[UPD] falha ao renomear o executável em uso: %s", erro)
+            return None
 
     try:
         shutil.move(str(novo), str(atual))
     except OSError as erro:
         log.error("[UPD] falha ao pôr a versão nova no lugar: %s — revertendo.",
                   erro)
-        try:
-            antigo.rename(atual)
-        except OSError:
-            log.critical("[UPD] o executável ficou como %s. Renomeie à mão.",
-                         antigo.name)
+        if not instalando:
+            try:
+                antigo.rename(atual)
+            except OSError:
+                log.critical("[UPD] o executável ficou como %s. Renomeie à mão.",
+                             antigo.name)
         return None
 
     descartar_pendente(base_dir, nome_exe)
@@ -716,6 +727,24 @@ def _pid_vivo(pid: int) -> bool:
         return codigo.value == STILL_ACTIVE
     finally:
         kernel32.CloseHandle(handle)
+
+
+def _exe_em_uso(caminho: Path) -> bool:
+    """Se há processo rodando este binário.
+
+    Windows não deixa abrir para escrita um executável mapeado — é a mesma
+    regra que impede sobrescrevê-lo. Um `open` de escrita que falha diz "em
+    uso" sem enumerar processo nenhum. Arquivo só-leitura também cai aqui e é
+    tratado como em uso: na dúvida, não se troca por fora.
+    """
+    try:
+        fd = os.open(str(caminho), os.O_RDWR)
+    except PermissionError:
+        return True
+    except OSError:
+        return False            # não existe, ou outro erro: não está rodando
+    os.close(fd)
+    return False
 
 
 class TravaDownload:
@@ -991,27 +1020,69 @@ class Atualizador:
         situacao["versao_nova"] = manifesto.versao
 
         pendente = ler_pendente(self.base_dir, irma.exe)
-        if pendente and pendente.get("versao") == manifesto.versao:
-            situacao.update(estado=PRONTO,
-                            mensagem="baixada; entra quando o programa abrir")
-            return situacao
+        em_espera = bool(pendente and pendente.get("versao") == manifesto.versao)
 
-        if not baixar:
-            situacao.update(estado=DISPONIVEL,
-                            mensagem=f"versão {manifesto.versao} disponível")
-            return situacao
+        if not em_espera:
+            if not baixar:
+                situacao.update(estado=DISPONIVEL,
+                                mensagem=f"versão {manifesto.versao} disponível")
+                return situacao
+            try:
+                em_espera = self._baixar_em_espera(irma.exe, manifesto)
+            except ErroAtualizacao as erro:
+                situacao.update(estado=ERRO, mensagem=str(erro))
+                return situacao
+            if not em_espera:
+                situacao.update(estado=BAIXANDO,
+                                mensagem="outro programa está baixando")
+                return situacao
 
+        # Em espera. Fechada, troca agora — ninguém está rodando o binário, e
+        # uma irmã velha demais para ter atualizador nunca aplicaria sozinha.
+        if baixar and not _exe_em_uso(caminho):
+            if aplicar_pendente(self.base_dir, irma.exe) is not None:
+                situacao.update(estado=ATUALIZADA,
+                                versao_atual=manifesto.versao,
+                                mensagem=f"atualizado para {manifesto.versao}")
+                return situacao
+        situacao.update(estado=PRONTO,
+                        mensagem="baixada; entra quando o programa abrir")
+        return situacao
+
+    def instalar_irma(self, nome_exe: str) -> dict:
+        """Baixa e põe na pasta uma irmã que não está instalada.
+
+        É o "Instalar NebulaTIR" do Gerenciador: o satélite não roda sem ele, e
+        quem tem o Gerenciador é quem o quer ao lado. Pedido explícito, nunca
+        rodada automática — instalar programa que ninguém pediu não é
+        atualização. Devolve a situação da irmã, como em `verificar_irmas`.
+        """
+        irma = next((f for f in self.irmas if f.exe.lower() == nome_exe.lower()),
+                    None)
+        if irma is None:
+            return {"nome": nome_exe, "exe": nome_exe, "versao_atual": "",
+                    "versao_nova": "", "estado": ERRO,
+                    "mensagem": "não é uma ferramenta desta família"}
+        situacao = {"nome": irma.nome, "exe": irma.exe, "versao_atual": "",
+                    "versao_nova": "", "estado": ERRO, "mensagem": ""}
+        caminho = self.base_dir / irma.exe
         try:
-            baixou = self._baixar_em_espera(irma.exe, manifesto)
+            if caminho.exists():
+                raise ErroAtualizacao(f"{irma.exe} já está instalado.")
+            manifesto = self._consultar(irma.url_manifesto)
+            situacao["versao_nova"] = manifesto.versao
+            if not self._baixar_em_espera(irma.exe, manifesto):
+                raise ErroAtualizacao("outro programa está baixando")
+            if aplicar_pendente(self.base_dir, irma.exe) is None:
+                raise ErroAtualizacao(
+                    f"não foi possível pôr {irma.exe} na pasta.")
         except ErroAtualizacao as erro:
-            situacao.update(estado=ERRO, mensagem=str(erro))
-            return situacao
-        if baixou:
-            situacao.update(estado=PRONTO,
-                            mensagem="baixada; entra quando o programa abrir")
+            situacao["mensagem"] = str(erro)
         else:
-            situacao.update(estado=BAIXANDO,
-                            mensagem="outro programa está baixando")
+            situacao.update(estado=ATUALIZADA, versao_atual=manifesto.versao,
+                            mensagem=f"instalado na versão {manifesto.versao}")
+        with self._trava:
+            self._familia[irma.exe] = situacao
         return situacao
 
     # ── download ──
