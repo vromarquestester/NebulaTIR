@@ -544,3 +544,97 @@ def test_versao_do_exe_le_o_versioninfo_de_um_binario_real():
     versao = upd.versao_do_exe(Path(sys.base_prefix) / "python.exe")
     assert versao and upd.versao_tupla(versao)
     assert upd.versao_do_exe(Path("nao_existe.exe")) is None
+
+
+# =============================================================
+# ARRANQUE: verifica sempre; janelinha ao aplicar
+# =============================================================
+
+def test_arranque_verifica_mesmo_com_marca_recente(instalado, monkeypatch):
+    """Abrir o programa é quando a pessoa mais espera vê-lo atualizado. O
+    freio de 5 min é do monitor, não da partida."""
+    from datetime import datetime, timezone
+    chamadas = _servidor(monkeypatch, {"u": _manifesto("0.2.0")})
+    agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0",
+                        upd.ConfigAtualizacao(ultima_verificacao=agora))
+    a.em_segundo_plano()
+    a._thread.join(5)
+    assert chamadas == [("u", None)]
+
+
+def test_arranque_desligado_nao_verifica(instalado, monkeypatch):
+    _servidor(monkeypatch, {"u": _manifesto("0.3.0")})
+    a = upd.Atualizador(instalado, NOME_EXE, "u", "0.2.0",
+                        upd.ConfigAtualizacao(automatica=False))
+    a.em_segundo_plano()
+    assert a._thread is None
+
+
+def _em_espera(base, versao_atual="0.2.0", versao="0.3.0", conteudo=b"novo"):
+    pasta = base / "update"
+    pasta.mkdir(exist_ok=True)
+    (pasta / f"{NOME_EXE}.new").write_bytes(conteudo)
+    (pasta / f"{NOME_EXE}.pendente.json").write_text(json.dumps({
+        "versao": versao, "versao_atual": versao_atual, "exe": NOME_EXE,
+        "sha256_exe": hashlib.sha256(conteudo).hexdigest()}), encoding="utf-8")
+
+
+def test_aplicar_informa_o_progresso_ate_cem(instalado):
+    _em_espera(instalado)
+    vistos = []
+    assert upd.aplicar_pendente(instalado, NOME_EXE,
+                                progresso=lambda p, t: vistos.append((p, t)))
+    pcts = [p for p, _ in vistos]
+    assert pcts[0] == 0 and pcts[-1] == 100
+    assert pcts == sorted(pcts)
+    assert "0.3.0" in vistos[-1][1]
+
+
+def test_progresso_que_estoura_nao_trava_a_troca(instalado):
+    _em_espera(instalado)
+    def explode(p, t):
+        raise RuntimeError("janela fechou")
+    assert upd.aplicar_pendente(instalado, NOME_EXE, progresso=explode)
+    assert (instalado / NOME_EXE).read_bytes() == b"novo"
+
+
+def test_sem_pendente_nao_abre_janela(instalado):
+    def janela(*a):
+        pytest.fail("abriu janela sem ter o que aplicar")
+    assert upd.aplicar_com_janela(instalado, NOME_EXE, "NebulaTIR", janela=janela) is None
+
+
+def test_com_pendente_a_janela_mostra_de_para_e_a_troca_acontece(instalado):
+    _em_espera(instalado)
+    visto = {}
+    def janela(titulo, versoes, trabalho):
+        visto.update(titulo=titulo, versoes=versoes)
+        trabalho(lambda p, t: visto.setdefault("pcts", []).append(p))
+    exe = upd.aplicar_com_janela(instalado, NOME_EXE, "NebulaTIR", janela=janela)
+    assert exe == instalado / NOME_EXE
+    assert visto["titulo"] == "NebulaTIR"
+    assert visto["versoes"] == "0.2.0 → 0.3.0"
+    assert visto["pcts"][-1] == 100
+    assert (instalado / NOME_EXE).read_bytes() == b"novo"
+
+
+def test_janela_que_falha_nao_impede_a_troca(instalado):
+    _em_espera(instalado)
+    def janela(*a):
+        raise RuntimeError("WebView2 ausente")
+    assert upd.aplicar_com_janela(instalado, NOME_EXE, "NebulaTIR", janela=janela) \
+        == instalado / NOME_EXE
+    assert (instalado / NOME_EXE).read_bytes() == b"novo"
+
+
+def test_preparar_partida_com_titulo_usa_a_janela(instalado, monkeypatch):
+    _em_espera(instalado)
+    monkeypatch.setattr(upd.sys, "frozen", True, raising=False)
+    chamadas = []
+    monkeypatch.setattr(upd, "_janela_progresso",
+                        lambda titulo, versoes, trabalho: (chamadas.append(titulo),
+                                                           trabalho(lambda p, t: None)))
+    assert upd.preparar_partida(instalado, NOME_EXE, titulo="NebulaTIR") \
+        == instalado / NOME_EXE
+    assert chamadas == ["NebulaTIR"]

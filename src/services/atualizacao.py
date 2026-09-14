@@ -84,6 +84,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -323,11 +324,19 @@ def comparar(versao_atual: str, manifesto: Manifesto,
 # DOWNLOAD E PREPARO
 # =============================================================
 
-def sha256_do_arquivo(caminho: Path) -> str:
+def sha256_do_arquivo(caminho: Path, on_progress=None) -> str:
+    """`on_progress(lidos, total)` a cada MB — para a barra do arranque, que
+    passa a maior parte do tempo aqui (o exe tem dezenas de MB)."""
     h = hashlib.sha256()
-    with Path(caminho).open("rb") as f:
+    caminho = Path(caminho)
+    total = caminho.stat().st_size
+    lidos = 0
+    with caminho.open("rb") as f:
         for bloco in iter(lambda: f.read(1024 * 1024), b""):
             h.update(bloco)
+            lidos += len(bloco)
+            if on_progress:
+                on_progress(lidos, total)
     return h.hexdigest()
 
 
@@ -450,8 +459,13 @@ def descartar_pendente(base_dir: Path, nome_exe: str) -> None:
         legado.unlink(missing_ok=True)
 
 
-def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
+def aplicar_pendente(base_dir: Path, nome_exe: str,
+                     progresso=None) -> Path | None:
     """Troca o executável, se houver um em espera. Devolve o novo, ou None.
+
+    `progresso(pct, texto)` é a janelinha do arranque: só informa, não decide
+    nada. A conferência do hash é onde o tempo vai (0→70 %); os renames são
+    instantâneos.
 
     Chamar **antes** de subir a janela e depois de garantir elevação — a pasta
     do programa costuma exigir administrador para escrita.
@@ -477,8 +491,19 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
     # O hash guardado é o do EXE já extraído, não o do zip: entre o download e
     # a próxima abertura o arquivo em espera fica no disco, e é essa janela que
     # a conferência aqui cobre.
+    def avisar(pct: int, texto: str) -> None:
+        if progresso:
+            try:
+                progresso(pct, texto)
+            except Exception:      # noqa: BLE001 — informar nunca pode travar a troca
+                pass
+
+    avisar(0, "Conferindo o arquivo baixado")
     esperado = str(pendente.get("sha256_exe") or "").lower()
-    if esperado and sha256_do_arquivo(novo) != esperado:
+    obtido = sha256_do_arquivo(
+        novo, lambda lidos, total: avisar(int(70 * lidos / max(total, 1)),
+                                          "Conferindo o arquivo baixado"))
+    if esperado and obtido != esperado:
         log.error("[UPD] o arquivo em espera não confere com o hash — descartado.")
         descartar_pendente(base_dir, nome_exe)
         return None
@@ -488,6 +513,7 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
     instalando = not atual.exists()
 
     if not instalando:
+        avisar(75, "Guardando a versão anterior")
         try:
             antigo.unlink(missing_ok=True)
         except OSError:
@@ -503,6 +529,7 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
             log.error("[UPD] falha ao renomear o executável em uso: %s", erro)
             return None
 
+    avisar(85, "Colocando a versão nova no lugar")
     try:
         shutil.move(str(novo), str(atual))
     except OSError as erro:
@@ -517,6 +544,7 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
         return None
 
     descartar_pendente(base_dir, nome_exe)
+    avisar(100, f"Versão {pendente.get('versao')} aplicada — abrindo")
     log.info("[UPD] versão %s aplicada.", pendente.get("versao"))
     return atual
 
@@ -606,7 +634,102 @@ def relancar(caminho_exe: Path) -> bool:
         return False
 
 
-def reiniciar(base_dir: Path, nome_exe: str) -> Path | None:
+_HTML_PROGRESSO = """<!doctype html><html><head><meta charset="utf-8"><style>
+  html,body{margin:0;height:100%;background:#0f1115;color:#e6e8ec;
+    font:14px/1.4 "Segoe UI",system-ui,sans-serif;overflow:hidden}
+  .caixa{padding:18px 22px;display:flex;flex-direction:column;gap:10px;height:100%;
+    box-sizing:border-box}
+  h1{margin:0;font-size:15px;font-weight:600}
+  .sub{font-size:12px;color:#9aa3ad}
+  .linha{display:flex;justify-content:space-between;font-size:12px;color:#c3c9d1}
+  .trilho{height:8px;border-radius:4px;background:#232833;overflow:hidden}
+  .trilho>span{display:block;height:100%;width:0;background:#22c55e;
+    transition:width .25s ease}
+</style></head><body><div class="caixa pywebview-drag-region">
+  <h1>__TITULO__ &middot; aplicando atualização</h1>
+  <div class="sub">__VERSOES__</div>
+  <div class="trilho"><span id="barra"></span></div>
+  <div class="linha"><span id="texto">Preparando</span><span id="pct">0%</span></div>
+</div><script>
+  function atualizar(p, t){document.getElementById('barra').style.width=p+'%';
+    document.getElementById('pct').textContent=p+'%';
+    document.getElementById('texto').textContent=t;}
+</script></body></html>"""
+
+
+def _janela_progresso(titulo: str, versoes: str, trabalho) -> None:
+    """Abre a janelinha, roda `trabalho(progresso)` numa thread e fecha.
+
+    `progresso(pct, texto)` pinta a barra. Sem botão: é informativo — o
+    usuário deu duplo clique e o programa está trocando o próprio binário;
+    a única coisa a dizer é "estou nisso, e quanto falta".
+
+    Dois `webview.start()` no mesmo processo funcionam (esta janela e depois
+    a principal), **desde que** esta termine de carregar antes de ser
+    destruída — daí o `loaded.wait` e a pausa no fim.
+    """
+    import webview   # tardio: só quem tem pendente paga a importação aqui
+
+    html = (_HTML_PROGRESSO.replace("__TITULO__", titulo)
+                           .replace("__VERSOES__", versoes))
+    janela = webview.create_window(
+        f"{titulo} — atualizando", html=html, width=460, height=150,
+        frameless=True, resizable=False, on_top=True,
+        background_color="#0f1115")
+
+    def rodar():
+        janela.events.loaded.wait(10)
+
+        def progresso(pct: int, texto: str) -> None:
+            try:
+                janela.evaluate_js(
+                    f"atualizar({int(pct)}, {json.dumps(texto, ensure_ascii=False)})")
+            except Exception:      # noqa: BLE001 — a janela é acessório
+                pass
+
+        try:
+            trabalho(progresso)
+        finally:
+            time.sleep(0.8)        # deixa o 100 % ser visto, e o WebView2 assentar
+            janela.destroy()
+
+    webview.start(rodar)
+
+
+def aplicar_com_janela(base_dir: Path, nome_exe: str, titulo: str,
+                       janela=None) -> Path | None:
+    """`aplicar_pendente` com a janelinha de progresso, quando há o que aplicar.
+
+    Sem pendente (a abertura normal, todo dia) não abre janela nenhuma e não
+    importa o pywebview aqui. Falha da janela degrada para a troca sem ela.
+    """
+    base_dir = Path(base_dir)
+    pendente = ler_pendente(base_dir, nome_exe)
+    if not pendente or not arquivo_novo(base_dir, nome_exe).exists():
+        return aplicar_pendente(base_dir, nome_exe)
+
+    resultado: dict = {}
+
+    def trabalho(progresso) -> None:
+        try:
+            resultado["exe"] = aplicar_pendente(base_dir, nome_exe, progresso)
+        except Exception:          # noqa: BLE001
+            log.exception("[UPD] falha ao aplicar com a janela.")
+            resultado["exe"] = None
+
+    de = str(pendente.get("versao_atual") or "").strip()
+    para = str(pendente.get("versao") or "").strip()
+    versoes = f"{de} → {para}" if de else f"versão {para}"
+    try:
+        (janela or _janela_progresso)(titulo, versoes, trabalho)
+    except Exception:              # noqa: BLE001 — sem janela, mas com troca
+        log.exception("[UPD] janela de progresso falhou; aplicando sem ela.")
+        if "exe" not in resultado:
+            return aplicar_pendente(base_dir, nome_exe)
+    return resultado.get("exe")
+
+
+def reiniciar(base_dir: Path, nome_exe: str, titulo: str | None = None) -> Path | None:
     """Rotina de saída do "Reiniciar agora": aplica o que estiver em espera e
     relança. Sem nada em espera, relança o executável como está.
 
@@ -619,7 +742,11 @@ def reiniciar(base_dir: Path, nome_exe: str) -> Path | None:
         return None            # em desenvolvimento não há binário para relançar
     base_dir = Path(base_dir)
     try:
-        exe = aplicar_pendente(base_dir, nome_exe) or (base_dir / nome_exe)
+        if titulo:
+            exe = aplicar_com_janela(base_dir, nome_exe, titulo)
+        else:
+            exe = aplicar_pendente(base_dir, nome_exe)
+        exe = exe or (base_dir / nome_exe)
     except Exception:          # noqa: BLE001 — falha na troca não pode travar a saída
         log.exception("[UPD] falha ao aplicar na saída; relançando como está.")
         exe = base_dir / nome_exe
@@ -631,8 +758,12 @@ def reiniciar(base_dir: Path, nome_exe: str) -> Path | None:
     return exe
 
 
-def preparar_partida(base_dir: Path, nome_exe: str) -> Path | None:
+def preparar_partida(base_dir: Path, nome_exe: str,
+                     titulo: str | None = None) -> Path | None:
     """Rotina de partida: recolhe o `.old` legado e aplica o que estiver em espera.
+
+    Com `titulo`, a troca mostra a janelinha de progresso (barra verde e
+    porcentagem, sem botão) e o programa abre em seguida já atualizado.
 
     Devolve o executável a relançar quando trocou, ou None para seguir a
     abertura normal. Nunca levanta: falha aqui não pode impedir o programa de
@@ -642,6 +773,8 @@ def preparar_partida(base_dir: Path, nome_exe: str) -> Path | None:
         return None            # em desenvolvimento não há binário para trocar
     try:
         limpar_antigo(base_dir, nome_exe)
+        if titulo:
+            return aplicar_com_janela(base_dir, nome_exe, titulo)
         return aplicar_pendente(base_dir, nome_exe)
     except Exception:          # noqa: BLE001 — partida não pode cair por isto
         log.exception("[UPD] falha ao preparar a partida; seguindo sem trocar.")
@@ -1028,7 +1161,8 @@ class Atualizador:
                                 mensagem=f"versão {manifesto.versao} disponível")
                 return situacao
             try:
-                em_espera = self._baixar_em_espera(irma.exe, manifesto)
+                em_espera = self._baixar_em_espera(irma.exe, manifesto,
+                                                   versao_atual=versao)
             except ErroAtualizacao as erro:
                 situacao.update(estado=ERRO, mensagem=str(erro))
                 return situacao
@@ -1088,10 +1222,11 @@ class Atualizador:
     # ── download ──
 
     def _baixar_em_espera(self, nome_exe: str, manifesto: Manifesto,
-                          on_progress=None) -> bool:
+                          on_progress=None, versao_atual: str = "") -> bool:
         """Baixa, confere o hash, extrai o executável e deixa em espera com o
         nome de `nome_exe`. Devolve False se outra ferramenta já está baixando
         este mesmo executável. Levanta `ErroAtualizacao` em falha.
+        `versao_atual` é só para a janelinha do arranque dizer "de → para".
         """
         pasta = pasta_update(self.base_dir)
         pasta.mkdir(parents=True, exist_ok=True)
@@ -1124,6 +1259,7 @@ class Atualizador:
                     "baixado_em": datetime.now(timezone.utc)
                                   .isoformat(timespec="seconds"),
                     "baixado_por": self.nome_exe,
+                    "versao_atual": versao_atual or "",
                 }, ensure_ascii=False, indent=2), encoding="utf-8")
             except ErroAtualizacao:
                 descartar_pendente(self.base_dir, nome_exe)
@@ -1152,7 +1288,8 @@ class Atualizador:
         self._marcar(BAIXANDO)
         self._progresso = 0
         try:
-            baixou = self._baixar_em_espera(self.nome_exe, manifesto, progresso)
+            baixou = self._baixar_em_espera(self.nome_exe, manifesto, progresso,
+                                            versao_atual=self.versao_atual)
         except ErroAtualizacao as erro:
             self._marcar(ERRO, str(erro))
             return self.estado
@@ -1171,10 +1308,14 @@ class Atualizador:
     # ── automático ──
 
     def em_segundo_plano(self, baixar_se_houver: bool = True) -> None:
-        """Verifica (e baixa) sem travar a janela.
+        """Verifica (e baixa) sem travar a janela — **em toda abertura**.
 
         Mesmo padrão da descoberta de ambientes: thread daemon disparada na
         partida. Morre com o processo — nada aqui merece segurar o fechamento.
+
+        Sem o freio do intervalo: abrir o programa é o momento em que a
+        pessoa mais espera vê-lo atualizado, e a consulta custa um GET
+        condicional. O freio de 5 min é do `monitorar`, que continua depois.
         """
         if not self.config.automatica:
             return
@@ -1183,7 +1324,7 @@ class Atualizador:
 
         def tarefa():
             try:
-                estado = self.verificar()
+                estado = self.verificar(forcado=True)
                 if baixar_se_houver and estado["estado"] == DISPONIVEL:
                     self.baixar()
             except Exception:      # noqa: BLE001

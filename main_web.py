@@ -56,7 +56,9 @@ def main() -> None:
     from services.canal import NOME_EXE  # noqa: E402
     from services.preferencias import BASE_DIR  # noqa: E402
 
-    novo = preparar_partida(BASE_DIR, NOME_EXE)
+    # Com pendente, mostra a janelinha de progresso (barra verde, sem botão)
+    # e abre em seguida já atualizado.
+    novo = preparar_partida(BASE_DIR, NOME_EXE, titulo="NebulaTIR")
     if novo is not None:
         relancar(novo)
         return
@@ -92,7 +94,7 @@ def main() -> None:
     # "Reiniciar agora": com a janela fechada e os monitores parados, aplica o
     # que estiver em espera e relança.
     if api.reinicio_pedido():
-        reiniciar(BASE_DIR, NOME_EXE)
+        reiniciar(BASE_DIR, NOME_EXE, titulo="NebulaTIR")
 
 
 if __name__ == "__main__":
