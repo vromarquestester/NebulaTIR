@@ -147,7 +147,7 @@ def test_hash_divergente_descarta_o_pacote(instalado, tmp_path):
     assert estado["estado"] == upd.ERRO
     assert "hash" in estado["mensagem"]
     # Sem prova de origem, nada fica em espera.
-    assert upd.ler_pendente(instalado) is None
+    assert upd.ler_pendente(instalado, NOME_EXE) is None
 
 
 def test_download_bom_deixa_em_espera(instalado, tmp_path):
@@ -162,7 +162,7 @@ def test_download_bom_deixa_em_espera(instalado, tmp_path):
     assert estado["estado"] == upd.PRONTO
     assert (instalado / "update" / f"{NOME_EXE}.new").exists()
 
-    pendente = upd.ler_pendente(instalado)
+    pendente = upd.ler_pendente(instalado, NOME_EXE)
     assert pendente["versao"] == "2.7.0"
     assert pendente["sha256_exe"]
     # O zip some depois de extraído: guardar 40 MB que já cumpriram o papel
@@ -204,7 +204,7 @@ def _deixar_em_espera(base: Path, conteudo=b"binario novo", versao="2.7.0"):
     pasta.mkdir(exist_ok=True)
     novo = pasta / f"{NOME_EXE}.new"
     novo.write_bytes(conteudo)
-    (pasta / "pendente.json").write_text(json.dumps({
+    (pasta / f"{NOME_EXE}.pendente.json").write_text(json.dumps({
         "versao": versao,
         "exe": NOME_EXE,
         "sha256_exe": hashlib.sha256(conteudo).hexdigest(),
@@ -225,7 +225,7 @@ def test_aplicar_troca_e_guarda_o_anterior(instalado):
     # vista: na pasta do programa parecia um arquivo estranho.
     assert (instalado / "update" / f"{NOME_EXE}.old").read_bytes() == b"binario velho"
     assert not (instalado / f"{NOME_EXE}.old").exists()
-    assert upd.ler_pendente(instalado) is None
+    assert upd.ler_pendente(instalado, NOME_EXE) is None
 
 
 def test_aplicar_sem_pendente_nao_faz_nada(instalado):
@@ -241,7 +241,7 @@ def test_arquivo_em_espera_adulterado_e_descartado(instalado):
 
     assert upd.aplicar_pendente(instalado, NOME_EXE) is None
     assert (instalado / NOME_EXE).read_bytes() == b"binario velho"
-    assert upd.ler_pendente(instalado) is None
+    assert upd.ler_pendente(instalado, NOME_EXE) is None
 
 
 def test_pendente_sem_arquivo_e_descartado(instalado):
@@ -249,7 +249,7 @@ def test_pendente_sem_arquivo_e_descartado(instalado):
     (instalado / "update" / f"{NOME_EXE}.new").unlink()
 
     assert upd.aplicar_pendente(instalado, NOME_EXE) is None
-    assert upd.ler_pendente(instalado) is None
+    assert upd.ler_pendente(instalado, NOME_EXE) is None
 
 
 def test_reverter_troca_os_dois_de_lugar(instalado):
@@ -304,7 +304,7 @@ def test_preparar_partida_nao_troca_em_desenvolvimento(instalado, monkeypatch):
     monkeypatch.delattr("sys.frozen", raising=False)
 
     assert upd.preparar_partida(instalado, NOME_EXE) is None
-    assert upd.ler_pendente(instalado) is not None
+    assert upd.ler_pendente(instalado, NOME_EXE) is not None
 
 
 def test_preparar_partida_engole_qualquer_falha(instalado, monkeypatch):
@@ -358,7 +358,7 @@ def test_reiniciar_aplica_o_pendente_e_relanca_o_novo(instalado, monkeypatch):
     assert upd.reiniciar(instalado, NOME_EXE) == instalado / NOME_EXE
     assert relancados == [instalado / NOME_EXE]
     assert (instalado / NOME_EXE).read_bytes() == b"binario novo"
-    assert upd.ler_pendente(instalado) is None
+    assert upd.ler_pendente(instalado, NOME_EXE) is None
 
 
 def test_reiniciar_sem_pendente_relanca_como_esta(instalado, monkeypatch):
@@ -408,10 +408,12 @@ def test_verificacao_recente_nao_repete(instalado):
     assert a.deve_verificar() is False
 
 
-def test_intervalo_e_de_uma_hora():
-    """Versão publicada de manhã chegava na estação só no dia seguinte."""
+def test_intervalo_casa_com_o_cache_do_cdn():
+    """5 min é o `max-age` do `raw`: mais rápido não vê nada novo, mais
+    devagar atrasa a versão sem economizar nada. O teto do backoff é 1 h."""
     from datetime import timedelta
-    assert upd.INTERVALO_VERIFICACAO == timedelta(hours=1)
+    assert upd.INTERVALO_VERIFICACAO == timedelta(minutes=5)
+    assert upd.INTERVALO_MAXIMO == timedelta(hours=1)
 
 
 def test_verificacao_de_duas_horas_atras_repete(instalado):
@@ -433,9 +435,10 @@ def test_verificacao_de_duas_horas_atras_repete(instalado):
 def test_rodada_baixa_quando_ha_versao_nova(instalado, monkeypatch):
     a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
                         upd.ConfigAtualizacao())
-    monkeypatch.setattr(upd, "consultar",
-                        lambda url, timeout=15: upd.Manifesto.de_dados(
-                            _manifesto_dict("2.7.0")))
+    monkeypatch.setattr(upd, "consultar_se_mudou",
+                        lambda url, etag=None, timeout=15: (
+                            upd.Manifesto.de_dados(_manifesto_dict("2.7.0")),
+                            "etag"))
     baixou = []
     monkeypatch.setattr(a, "baixar", lambda: baixou.append(True))
 
@@ -447,8 +450,8 @@ def test_rodada_baixa_quando_ha_versao_nova(instalado, monkeypatch):
 def test_rodada_nao_faz_nada_com_o_automatico_desligado(instalado, monkeypatch):
     a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
                         upd.ConfigAtualizacao(automatica=False))
-    monkeypatch.setattr(upd, "consultar",
-                        lambda url, timeout=15: pytest.fail(
+    monkeypatch.setattr(upd, "consultar_se_mudou",
+                        lambda url, etag=None, timeout=15: pytest.fail(
                             "não pode consultar com o automático desligado"))
 
     a._rodada_periodica()
@@ -504,18 +507,19 @@ def test_desligado_nao_verifica_sozinho_mas_aceita_forcado(instalado, monkeypatc
     assert a.deve_verificar() is False
 
     # Desligar o automático não é renunciar a atualizar.
-    monkeypatch.setattr(upd, "consultar",
-                        lambda url, timeout=15: upd.Manifesto.de_dados(
-                            _manifesto_dict("2.7.0")))
+    monkeypatch.setattr(upd, "consultar_se_mudou",
+                        lambda url, etag=None, timeout=15: (
+                            upd.Manifesto.de_dados(_manifesto_dict("2.7.0")),
+                            "etag"))
     assert a.verificar(forcado=True)["estado"] == upd.DISPONIVEL
 
 
 def test_falha_de_rede_vira_erro_visivel(instalado, monkeypatch):
     # Proxy corporativo bloqueando o GitHub não pode virar "sempre em dia".
-    def explode(url, timeout=15):
+    def explode(url, etag=None, timeout=15):
         raise upd.ErroAtualizacao("Não foi possível consultar atualizações: x")
 
-    monkeypatch.setattr(upd, "consultar", explode)
+    monkeypatch.setattr(upd, "consultar_se_mudou", explode)
     a = upd.Atualizador(instalado, NOME_EXE, "http://x", "2.6.1",
                         upd.ConfigAtualizacao())
     estado = a.verificar(forcado=True)

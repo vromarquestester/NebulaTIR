@@ -17,10 +17,18 @@ achando que atualizou.
 Estrutura em disco, ao lado do executável::
 
     NebulaTIR.exe
+    GerenciadorAmbientes.exe          as outras ferramentas da família
     update/
-        pendente.json                 o que está em espera
-        NebulaTIR.exe.new  o binário já baixado e conferido
-        NebulaTIR.exe.old  versão anterior, para reverter
+        NebulaTIR.exe.pendente.json   o que está em espera, por executável
+        NebulaTIR.exe.new             o binário já baixado e conferido
+        NebulaTIR.exe.old             versão anterior, para reverter
+        NebulaTIR.exe.baixando        trava: quem está baixando este exe
+
+Tudo em `update/` leva o nome do executável a que pertence. A pasta é
+compartilhada pelas ferramentas da família (`services/familia.py`), e um
+`pendente.json` único — como era até 2026-09-14 — fazia uma ferramenta
+descartar a atualização em espera da outra: NebulaTIR abria, lia o pendente do
+Gerenciador, não achava `NebulaTIR.exe.new` e apagava tudo.
 
 O `.old` mora dentro de `update/`, e não ao lado do `.exe`: na pasta do
 programa ele parecia um arquivo estranho que apareceu do nada. Renomear o
@@ -44,6 +52,15 @@ Regras que atravessam o módulo:
 - **Nada é trocado com a janela aberta.** A troca acontece na partida, antes
   da janela subir, ou na saída, quando o usuário pede "Reiniciar agora" — nos
   dois casos sem ninguém usando o programa.
+- **Quem verifica, verifica para a família inteira.** Cada rodada consulta o
+  manifesto das irmãs instaladas na mesma pasta e deixa em espera o que estiver
+  desatualizado — a irmã aplica na própria partida. Quem manda no download é o
+  interruptor "automática" da ferramenta que detectou; a irmã fechada não tem
+  como opinar, e a aberta vê o pendente na rodada dela e avisa "reinicie".
+- **A verificação é barata de propósito.** GET condicional com `ETag`: o
+  `raw` responde `304` sem corpo (~550 B de cabeçalho) enquanto nada mudou, e
+  só entrega o JSON quando há versão nova. Falha de rede dobra o intervalo até
+  o teto — VPN caída não martela o GitHub.
 
 Relançar exige limpar o ambiente do PyInstaller. O bootloader (onefile) deixa
 `_PYI_*` no ambiente do processo, e a partir do PyInstaller 6.9 o executável
@@ -71,6 +88,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from services.familia import Ferramenta
+
 log = logging.getLogger(__name__)
 
 # Versão do formato do latest.json que este código entende. Manifesto de
@@ -79,15 +98,28 @@ log = logging.getLogger(__name__)
 ESQUEMA_SUPORTADO = 1
 
 PASTA_UPDATE = "update"
-ARQUIVO_PENDENTE = "pendente.json"
+# Nome antigo, único para a pasta. Só é lido para não perder o que uma versão
+# anterior deixou em espera; nunca mais é escrito.
+ARQUIVO_PENDENTE_LEGADO = "pendente.json"
+SUFIXO_PENDENTE = ".pendente.json"
 SUFIXO_NOVO = ".new"
 SUFIXO_ANTIGO = ".old"
+SUFIXO_TRAVA = ".baixando"
 
-# De hora em hora, não uma vez por dia: versão publicada de manhã só chegava na
-# estação no dia seguinte. A verificação é uma requisição HTTP a um arquivo de
-# poucos KB no `raw` do GitHub — nenhum processo é criado, nenhuma janela
-# aparece, e não há custo que justifique esperar 24 h.
-INTERVALO_VERIFICACAO = timedelta(hours=1)
+# A cada 5 min, que é o `max-age` do CDN do `raw`: verificar mais rápido não
+# vê nada novo, e mais devagar atrasa a versão sem economizar nada que
+# importe. A requisição é condicional (`If-None-Match`): enquanto o manifesto
+# não muda, a resposta é um `304` sem corpo. Nenhum processo é criado, nenhuma
+# janela aparece.
+INTERVALO_VERIFICACAO = timedelta(minutes=5)
+# Em falha o intervalo dobra a cada tentativa até aqui. Rede corporativa,
+# proxy e VPN caem o tempo todo; insistir a cada 5 min seria ruído no log e
+# no proxy.
+INTERVALO_MAXIMO = timedelta(hours=1)
+# A marca `ultima_verificacao` vai para a configuração no máximo uma vez por
+# hora. Ela só serve à partida (primeira execução verifica sempre); gravar a
+# cada 5 min reescreveria a configuração o dia inteiro por nada.
+INTERVALO_REGISTRO = timedelta(hours=1)
 TIMEOUT_MANIFESTO = 15
 TIMEOUT_DOWNLOAD = 300
 CHUNK = 262144
@@ -101,6 +133,8 @@ DISPONIVEL = "disponivel"
 BAIXANDO = "baixando"
 PRONTO = "pronto"
 ERRO = "erro"
+# Só para as irmãs (a própria ferramenta não pode estar ausente).
+AUSENTE = "ausente"
 
 
 class ErroAtualizacao(Exception):
@@ -210,26 +244,47 @@ class Manifesto:
         )
 
 
-def consultar(url: str, timeout: int = TIMEOUT_MANIFESTO) -> Manifesto:
-    """Lê o manifesto da vitrine.
+def consultar_se_mudou(url: str, etag: str | None = None,
+                       timeout: int = TIMEOUT_MANIFESTO
+                       ) -> tuple[Manifesto | None, str | None]:
+    """Lê o manifesto da vitrine, só se ele mudou desde o `etag` dado.
 
-    ⚠ `raw.githubusercontent.com` tem cache de CDN de alguns minutos: publicar
-    e o programa não ver na hora é normal, não defeito.
+    Devolve `(manifesto, etag_novo)`. Com `etag` e nada mudado, o servidor
+    responde `304` sem corpo e o manifesto vem `None` — quem chama reaproveita
+    o que já tinha. Medido no `raw` do GitHub em 2026-09-14: `200` = 809 B de
+    corpo + 934 B de cabeçalho; `304` = 0 B + 551 B.
+
+    ⚠ `raw.githubusercontent.com` tem cache de CDN de 5 min (`max-age=300`):
+    publicar e o programa não ver na hora é normal, não defeito.
     """
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "atualizador", "Cache-Control": "no-cache"})
+    cabecalhos = {"User-Agent": "atualizador"}
+    if etag:
+        cabecalhos["If-None-Match"] = etag
+    req = urllib.request.Request(url, headers=cabecalhos)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             bruto = r.read().decode("utf-8")
+            etag_novo = r.headers.get("ETag") or None
+    except urllib.error.HTTPError as erro:
+        if erro.code == 304:
+            return None, etag
+        raise ErroAtualizacao(f"Não foi possível consultar atualizações: {erro}")
     except (urllib.error.URLError, TimeoutError, OSError) as erro:
         # Rede corporativa, proxy e VPN fora do ar caem aqui. É falha de
         # verificação, não do programa — quem chama mostra e segue.
         raise ErroAtualizacao(f"Não foi possível consultar atualizações: {erro}")
 
     try:
-        return Manifesto.de_dados(json.loads(bruto))
+        return Manifesto.de_dados(json.loads(bruto)), etag_novo
     except ValueError as erro:
         raise ErroAtualizacao(f"Manifesto ilegível: {erro}")
+
+
+def consultar(url: str, timeout: int = TIMEOUT_MANIFESTO) -> Manifesto:
+    """Lê o manifesto sem condição — sempre traz o corpo."""
+    manifesto, _ = consultar_se_mudou(url, None, timeout)
+    assert manifesto is not None      # sem etag não há 304
+    return manifesto
 
 
 def comparar(versao_atual: str, manifesto: Manifesto,
@@ -342,8 +397,16 @@ def pasta_update(base_dir: Path) -> Path:
     return Path(base_dir) / PASTA_UPDATE
 
 
-def ler_pendente(base_dir: Path) -> dict | None:
-    arquivo = pasta_update(base_dir) / ARQUIVO_PENDENTE
+def arquivo_pendente(base_dir: Path, nome_exe: str) -> Path:
+    """`update/<exe>.pendente.json` — um por executável, na pasta partilhada."""
+    return pasta_update(base_dir) / f"{nome_exe}{SUFIXO_PENDENTE}"
+
+
+def arquivo_novo(base_dir: Path, nome_exe: str) -> Path:
+    return pasta_update(base_dir) / f"{nome_exe}{SUFIXO_NOVO}"
+
+
+def _ler_json(arquivo: Path) -> dict | None:
     try:
         dados = json.loads(arquivo.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -351,12 +414,35 @@ def ler_pendente(base_dir: Path) -> dict | None:
     return dados if isinstance(dados, dict) else None
 
 
-def descartar_pendente(base_dir: Path) -> None:
-    """Apaga o que estava em espera. Usado quando ele não serve mais."""
-    pasta = pasta_update(base_dir)
-    (pasta / ARQUIVO_PENDENTE).unlink(missing_ok=True)
-    for arquivo in pasta.glob(f"*{SUFIXO_NOVO}"):
-        arquivo.unlink(missing_ok=True)
+def ler_pendente(base_dir: Path, nome_exe: str) -> dict | None:
+    """O que está em espera para ESTE executável.
+
+    Lê o arquivo por exe; na falta dele, o `pendente.json` antigo — mas só se
+    o `exe` gravado nele for o nosso. Uma versão anterior pode ter deixado o
+    pendente da irmã lá, e esse não é nosso para ler nem para apagar.
+    """
+    dados = _ler_json(arquivo_pendente(base_dir, nome_exe))
+    if dados is None:
+        dados = _ler_json(pasta_update(base_dir) / ARQUIVO_PENDENTE_LEGADO)
+        if dados is None or str(dados.get("exe", "")).lower() != nome_exe.lower():
+            return None
+    if str(dados.get("exe") or nome_exe).lower() != nome_exe.lower():
+        return None
+    return dados
+
+
+def descartar_pendente(base_dir: Path, nome_exe: str) -> None:
+    """Apaga o que estava em espera **deste** executável.
+
+    Só o que leva o nosso nome. Apagar `*.new` da pasta inteira, como era,
+    destruía a atualização baixada pela irmã.
+    """
+    arquivo_pendente(base_dir, nome_exe).unlink(missing_ok=True)
+    arquivo_novo(base_dir, nome_exe).unlink(missing_ok=True)
+    legado = pasta_update(base_dir) / ARQUIVO_PENDENTE_LEGADO
+    dados = _ler_json(legado)
+    if dados is not None and str(dados.get("exe", "")).lower() == nome_exe.lower():
+        legado.unlink(missing_ok=True)
 
 
 def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
@@ -370,17 +456,17 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
     atualização que não acontece.
     """
     base_dir = Path(base_dir)
-    pendente = ler_pendente(base_dir)
+    pendente = ler_pendente(base_dir, nome_exe)
     if not pendente:
         return None
 
-    novo = pasta_update(base_dir) / f"{nome_exe}{SUFIXO_NOVO}"
+    novo = arquivo_novo(base_dir, nome_exe)
     atual = base_dir / nome_exe
     antigo = caminho_antigo(base_dir, nome_exe)
 
     if not novo.exists() or not atual.exists():
         log.warning("[UPD] pendente sem arquivo — descartado.")
-        descartar_pendente(base_dir)
+        descartar_pendente(base_dir, nome_exe)
         return None
 
     # O hash guardado é o do EXE já extraído, não o do zip: entre o download e
@@ -389,7 +475,7 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
     esperado = str(pendente.get("sha256_exe") or "").lower()
     if esperado and sha256_do_arquivo(novo) != esperado:
         log.error("[UPD] o arquivo em espera não confere com o hash — descartado.")
-        descartar_pendente(base_dir)
+        descartar_pendente(base_dir, nome_exe)
         return None
 
     try:
@@ -419,7 +505,7 @@ def aplicar_pendente(base_dir: Path, nome_exe: str) -> Path | None:
                          antigo.name)
         return None
 
-    descartar_pendente(base_dir)
+    descartar_pendente(base_dir, nome_exe)
     log.info("[UPD] versão %s aplicada.", pendente.get("versao"))
     return atual
 
@@ -552,6 +638,126 @@ def preparar_partida(base_dir: Path, nome_exe: str) -> Path | None:
 
 
 # =============================================================
+# A FAMÍLIA — versão da irmã e trava de download
+# =============================================================
+
+def versao_do_exe(caminho: Path) -> str | None:
+    """A versão gravada no `VS_VERSIONINFO` do executável, ou None.
+
+    É como se sabe a versão da irmã sem ela cooperar: uma ferramenta que nunca
+    abriu não registrou nada em lugar nenhum, mas o binário carrega a versão
+    (`generate_version_info.py` grava o `__version__` completo no
+    `StringFileInfo`, pré-lançamento incluído — o campo numérico o perde).
+    """
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    version = ctypes.WinDLL("version", use_last_error=True)
+    caminho = str(caminho)
+    tamanho = version.GetFileVersionInfoSizeW(caminho, None)
+    if not tamanho:
+        return None
+    dados = ctypes.create_string_buffer(tamanho)
+    if not version.GetFileVersionInfoW(caminho, 0, tamanho, dados):
+        return None
+
+    ponteiro = ctypes.c_void_p()
+    comprimento = wintypes.UINT()
+
+    def consulta(sub: str) -> bool:
+        return bool(version.VerQueryValueW(
+            dados, sub, ctypes.byref(ponteiro), ctypes.byref(comprimento)))
+
+    # Texto primeiro: é o único lugar em que "2.8.0-rc1" sobrevive.
+    traducoes = [(0x0409, 0x04B0)]
+    if consulta("\\VarFileInfo\\Translation") and comprimento.value >= 4:
+        pares = ctypes.cast(ponteiro, ctypes.POINTER(wintypes.WORD))
+        traducoes = [(pares[i], pares[i + 1])
+                     for i in range(0, comprimento.value // 2, 2)] + traducoes
+    for idioma, pagina in traducoes:
+        chave = f"\\StringFileInfo\\{idioma:04x}{pagina:04x}\\FileVersion"
+        if consulta(chave) and comprimento.value:
+            texto = ctypes.wstring_at(ponteiro, comprimento.value)
+            texto = texto.rstrip("\x00").strip()
+            if _SEMVER.match(texto):
+                return texto.lstrip("vV")
+
+    # Sem texto utilizável: o campo numérico (perde o pré-lançamento).
+    if consulta("\\") and comprimento.value >= 16:
+        campos = ctypes.cast(ponteiro, ctypes.POINTER(wintypes.DWORD))
+        ms, ls = campos[2], campos[3]        # dwFileVersionMS, dwFileVersionLS
+        return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}"
+    return None
+
+
+def _pid_vivo(pid: int) -> bool:
+    if not pid:
+        return False
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    import ctypes
+    from ctypes import wintypes
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False
+    try:
+        codigo = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(codigo)):
+            return True
+        return codigo.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+class TravaDownload:
+    """`update/<exe>.baixando`: quem está baixando aquele executável.
+
+    Duas ferramentas abertas veem a mesma versão nova ao mesmo tempo — a
+    própria e a irmã — e sem isto as duas baixariam o mesmo zip para o mesmo
+    caminho. A trava é um arquivo criado com `x` (atômico no NTFS) com o PID
+    de quem baixa; trava de processo morto é lixo de crash e é tomada.
+
+    Uso: ``with TravaDownload(base_dir, exe) as obtida: if not obtida: ...``
+    """
+
+    def __init__(self, base_dir: Path, nome_exe: str):
+        self.arquivo = pasta_update(base_dir) / f"{nome_exe}{SUFIXO_TRAVA}"
+        self.obtida = False
+
+    def __enter__(self) -> bool:
+        self.arquivo.parent.mkdir(parents=True, exist_ok=True)
+        for _ in range(2):
+            try:
+                with self.arquivo.open("x", encoding="utf-8") as f:
+                    json.dump({"pid": os.getpid(),
+                               "quando": datetime.now(timezone.utc)
+                               .isoformat(timespec="seconds")}, f)
+                self.obtida = True
+                return True
+            except FileExistsError:
+                dona = _ler_json(self.arquivo) or {}
+                if _pid_vivo(int(dona.get("pid") or 0)):
+                    return False          # outra ferramenta está baixando
+                self.arquivo.unlink(missing_ok=True)    # sobra de crash
+            except OSError:
+                return False
+        return False
+
+    def __exit__(self, *_exc) -> None:
+        if self.obtida:
+            self.arquivo.unlink(missing_ok=True)
+
+
+# =============================================================
 # ORQUESTRAÇÃO
 # =============================================================
 
@@ -575,21 +781,27 @@ class ConfigAtualizacao:
 
 
 class Atualizador:
-    """Verifica, baixa em espera e informa a interface.
+    """Verifica, baixa em espera e informa a interface — para si e para as irmãs.
 
     Nada aqui troca binário: a troca é do `preparar_partida`, na abertura
     seguinte. Isto é deliberado — trocar com o programa aberto exigiria
     processo auxiliar e deixaria o usuário sem saber em que versão está.
+
+    `irmas` são as outras ferramentas da família (`services/familia.py`). A
+    cada verificação o manifesto de cada uma é consultado; a que estiver
+    instalada ao lado e desatualizada é baixada em espera com o nome dela, e
+    ela mesma aplica na própria partida.
     """
 
     def __init__(self, base_dir: Path, nome_exe: str, url_manifesto: str,
                  versao_atual: str, config: ConfigAtualizacao,
-                 baixador=None):
+                 baixador=None, irmas: tuple[Ferramenta, ...] = ()):
         self.base_dir = Path(base_dir)
         self.nome_exe = nome_exe
         self.url_manifesto = url_manifesto
         self.versao_atual = versao_atual
         self.config = config
+        self.irmas = tuple(irmas)
         self._baixador = baixador or _baixar_simples
 
         self._trava = threading.Lock()
@@ -602,12 +814,21 @@ class Atualizador:
         # avulsa para os dois não disputarem o mesmo guarda.
         self._monitor: threading.Thread | None = None
         self._parar_monitor = threading.Event()
+        # GET condicional: por URL, o `ETag` da última resposta com corpo e o
+        # manifesto que veio nela. `304` reaproveita o manifesto guardado.
+        self._cache: dict[str, tuple[str | None, Manifesto]] = {}
+        # Falhas seguidas de rede: dobram o intervalo do monitor até o teto.
+        self._falhas = 0
+        # Quando a marca `ultima_verificacao` foi gravada por último.
+        self._ultimo_registro: datetime | None = None
+        # Situação de cada irmã, pelo nome do exe, para a interface.
+        self._familia: dict[str, dict] = {}
 
     # ── leitura para a interface ──
 
     @property
     def estado(self) -> dict:
-        pendente = ler_pendente(self.base_dir)
+        pendente = ler_pendente(self.base_dir, self.nome_exe)
         with self._trava:
             m = self._manifesto
             return {
@@ -622,6 +843,8 @@ class Atualizador:
                 "automatica": bool(self.config.automatica),
                 "pode_reverter": pode_reverter(self.base_dir, self.nome_exe),
                 "pendente": bool(pendente),
+                "intervalo_seg": int(self.intervalo_atual().total_seconds()),
+                "familia": [dict(v) for v in self._familia.values()],
             }
 
     def _marcar(self, estado: str, mensagem: str = "") -> None:
@@ -632,10 +855,10 @@ class Atualizador:
     # ── verificação ──
 
     def deve_verificar(self) -> bool:
-        """Uma vez por dia — e **sempre** na primeira execução.
+        """Dentro do intervalo, não — e **sempre** na primeira execução.
 
         Quem acabou de extrair o pacote de entrada está, de propósito, várias
-        versões atrás: esperar até amanhã para contar isso seria absurdo.
+        versões atrás: esperar para contar isso seria absurdo.
         """
         if not self.config.automatica:
             return False
@@ -650,28 +873,60 @@ class Atualizador:
             quando = quando.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc) - quando >= INTERVALO_VERIFICACAO
 
+    def intervalo_atual(self) -> timedelta:
+        """O que o monitor espera até a próxima rodada: dobra a cada falha."""
+        base = INTERVALO_VERIFICACAO.total_seconds()
+        teto = INTERVALO_MAXIMO.total_seconds()
+        return timedelta(seconds=min(teto, base * (2 ** self._falhas)))
+
+    def _consultar(self, url: str) -> Manifesto:
+        """Manifesto da URL, pelo GET condicional. Levanta `ErroAtualizacao`."""
+        etag_guardado, guardado = self._cache.get(url, (None, None))
+        manifesto, etag = consultar_se_mudou(url, etag_guardado)
+        if manifesto is None:
+            if guardado is None:
+                # `304` sem nada guardado só acontece com etag alheio no
+                # cache — impossível aqui, mas não se confia em "impossível".
+                manifesto, etag = consultar_se_mudou(url, None)
+            else:
+                return guardado
+        self._cache[url] = (etag, manifesto)
+        return manifesto
+
+    def _registrar(self) -> None:
+        """Grava a marca no máximo uma vez por `INTERVALO_REGISTRO`."""
+        agora = datetime.now(timezone.utc)
+        if (self._ultimo_registro is not None
+                and agora - self._ultimo_registro < INTERVALO_REGISTRO):
+            return
+        self._ultimo_registro = agora
+        self.config.registrar_verificacao(agora.isoformat(timespec="seconds"))
+
     def verificar(self, forcado: bool = False) -> dict:
-        """Consulta o manifesto. `forcado` ignora o intervalo e o desligado.
+        """Consulta o manifesto — o próprio e o das irmãs. `forcado` ignora o
+        intervalo e o desligado.
 
         Desligar o automático não é renunciar a atualizar: o botão "Verificar
-        agora" continua valendo.
+        agora" continua valendo. Com ele desligado, as irmãs são só
+        conferidas, nunca baixadas.
         """
         if not forcado and not self.deve_verificar():
             return self.estado
 
         self._marcar(VERIFICANDO)
         try:
-            manifesto = consultar(self.url_manifesto)
+            manifesto = self._consultar(self.url_manifesto)
         except ErroAtualizacao as erro:
             # Erro de verificação é mostrado, nunca engolido: "sempre em dia"
             # silencioso esconderia proxy bloqueando o GitHub.
+            self._falhas += 1
             self._marcar(ERRO, str(erro))
             return self.estado
 
+        self._falhas = 0
         with self._trava:
             self._manifesto = manifesto
-        self.config.registrar_verificacao(
-            datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        self._registrar()
 
         decisao = comparar(self.versao_atual, manifesto,
                            self.config.incluir_prerelease)
@@ -680,29 +935,143 @@ class Atualizador:
                 self._marcar(ERRO, decisao["motivo"])
             else:
                 self._marcar(EM_DIA, decisao["motivo"])
-            return self.estado
+        else:
+            pendente = ler_pendente(self.base_dir, self.nome_exe)
+            if pendente and pendente.get("versao") == manifesto.versao:
+                self._marcar(PRONTO, "reinicie o programa para aplicar")
+            else:
+                self._marcar(DISPONIVEL, f"versão {manifesto.versao} disponível")
 
-        pendente = ler_pendente(self.base_dir)
-        if pendente and pendente.get("versao") == manifesto.versao:
-            self._marcar(PRONTO, "reinicie o programa para aplicar")
-            return self.estado
-
-        self._marcar(DISPONIVEL, f"versão {manifesto.versao} disponível")
+        self.verificar_irmas(baixar=self.config.automatica)
         return self.estado
+
+    # ── a família ──
+
+    def verificar_irmas(self, baixar: bool) -> list[dict]:
+        """Confere cada irmã instalada ao lado e, se `baixar`, deixa em espera
+        a que estiver desatualizada.
+
+        Nunca levanta e nunca muda o estado próprio: irmã ausente, manifesto
+        fora do ar ou exe sem versão legível são registrados na situação dela
+        e a rodada segue. O que acontece com a irmã não é notícia sobre nós.
+        """
+        situacoes = []
+        for irma in self.irmas:
+            situacao = self._situacao_da_irma(irma, baixar)
+            with self._trava:
+                self._familia[irma.exe] = situacao
+            situacoes.append(situacao)
+        return situacoes
+
+    def _situacao_da_irma(self, irma: Ferramenta, baixar: bool) -> dict:
+        situacao = {"nome": irma.nome, "exe": irma.exe, "versao_atual": "",
+                    "versao_nova": "", "estado": AUSENTE, "mensagem": ""}
+        caminho = self.base_dir / irma.exe
+        if not caminho.exists():
+            situacao["mensagem"] = "não está instalado nesta pasta"
+            return situacao
+
+        versao = versao_do_exe(caminho)
+        if not versao:
+            situacao.update(estado=ERRO,
+                            mensagem="não foi possível ler a versão do executável")
+            return situacao
+        situacao["versao_atual"] = versao
+
+        try:
+            manifesto = self._consultar(irma.url_manifesto)
+        except ErroAtualizacao as erro:
+            situacao.update(estado=ERRO, mensagem=str(erro))
+            return situacao
+
+        decisao = comparar(versao, manifesto, self.config.incluir_prerelease)
+        if not decisao["atualizar"]:
+            situacao.update(estado=EM_DIA, mensagem=decisao["motivo"])
+            return situacao
+        situacao["versao_nova"] = manifesto.versao
+
+        pendente = ler_pendente(self.base_dir, irma.exe)
+        if pendente and pendente.get("versao") == manifesto.versao:
+            situacao.update(estado=PRONTO,
+                            mensagem="baixada; entra quando o programa abrir")
+            return situacao
+
+        if not baixar:
+            situacao.update(estado=DISPONIVEL,
+                            mensagem=f"versão {manifesto.versao} disponível")
+            return situacao
+
+        try:
+            baixou = self._baixar_em_espera(irma.exe, manifesto)
+        except ErroAtualizacao as erro:
+            situacao.update(estado=ERRO, mensagem=str(erro))
+            return situacao
+        if baixou:
+            situacao.update(estado=PRONTO,
+                            mensagem="baixada; entra quando o programa abrir")
+        else:
+            situacao.update(estado=BAIXANDO,
+                            mensagem="outro programa está baixando")
+        return situacao
 
     # ── download ──
 
+    def _baixar_em_espera(self, nome_exe: str, manifesto: Manifesto,
+                          on_progress=None) -> bool:
+        """Baixa, confere o hash, extrai o executável e deixa em espera com o
+        nome de `nome_exe`. Devolve False se outra ferramenta já está baixando
+        este mesmo executável. Levanta `ErroAtualizacao` em falha.
+        """
+        pasta = pasta_update(self.base_dir)
+        pasta.mkdir(parents=True, exist_ok=True)
+        caminho_zip = pasta / (manifesto.nome or f"{nome_exe}.zip")
+        novo = arquivo_novo(self.base_dir, nome_exe)
+
+        with TravaDownload(self.base_dir, nome_exe) as obtida:
+            if not obtida:
+                return False
+            try:
+                self._baixador(manifesto.url, caminho_zip, on_progress)
+
+                obtido = sha256_do_arquivo(caminho_zip)
+                if obtido != manifesto.sha256:
+                    # Sem assinatura de código, este hash é a única prova de
+                    # origem. O que não bate é descartado, nunca instalado.
+                    raise ErroAtualizacao(
+                        "O pacote baixado não confere com o hash publicado — "
+                        "descartado.")
+
+                _extrair_exe(caminho_zip, manifesto.exe, novo)
+                limpar_marca_da_internet(novo)
+
+                arquivo_pendente(self.base_dir, nome_exe).write_text(json.dumps({
+                    "versao": manifesto.versao,
+                    "exe": nome_exe,
+                    "sha256_zip": manifesto.sha256,
+                    "sha256_exe": sha256_do_arquivo(novo),
+                    "changelog": list(manifesto.changelog),
+                    "baixado_em": datetime.now(timezone.utc)
+                                  .isoformat(timespec="seconds"),
+                    "baixado_por": self.nome_exe,
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
+            except ErroAtualizacao:
+                descartar_pendente(self.base_dir, nome_exe)
+                raise
+            except OSError as erro:
+                descartar_pendente(self.base_dir, nome_exe)
+                raise ErroAtualizacao(
+                    f"falha ao preparar a atualização: {erro}")
+            finally:
+                caminho_zip.unlink(missing_ok=True)
+        return True
+
     def baixar(self) -> dict:
-        """Baixa, confere o hash, extrai o executável e deixa em espera."""
+        """Baixa a própria atualização e deixa em espera."""
         with self._trava:
             manifesto = self._manifesto
         if manifesto is None:
             self._marcar(ERRO, "verifique antes de baixar")
             return self.estado
-
-        pasta = pasta_update(self.base_dir)
-        pasta.mkdir(parents=True, exist_ok=True)
-        caminho_zip = pasta / (manifesto.nome or f"{self.nome_exe}.zip")
 
         def progresso(baixado, total):
             if total:
@@ -712,39 +1081,17 @@ class Atualizador:
         self._marcar(BAIXANDO)
         self._progresso = 0
         try:
-            self._baixador(manifesto.url, caminho_zip, progresso)
-
-            obtido = sha256_do_arquivo(caminho_zip)
-            if obtido != manifesto.sha256:
-                # Sem assinatura de código, este hash é a única prova de
-                # origem. O que não bate é descartado, nunca instalado.
-                raise ErroAtualizacao(
-                    "O pacote baixado não confere com o hash publicado — "
-                    "descartado.")
-
-            novo = pasta / f"{self.nome_exe}{SUFIXO_NOVO}"
-            _extrair_exe(caminho_zip, manifesto.exe, novo)
-            limpar_marca_da_internet(novo)
-
-            (pasta / ARQUIVO_PENDENTE).write_text(json.dumps({
-                "versao": manifesto.versao,
-                "exe": self.nome_exe,
-                "sha256_zip": manifesto.sha256,
-                "sha256_exe": sha256_do_arquivo(novo),
-                "changelog": list(manifesto.changelog),
-                "baixado_em": datetime.now(timezone.utc)
-                              .isoformat(timespec="seconds"),
-            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            baixou = self._baixar_em_espera(self.nome_exe, manifesto, progresso)
         except ErroAtualizacao as erro:
-            descartar_pendente(self.base_dir)
             self._marcar(ERRO, str(erro))
             return self.estado
-        except OSError as erro:
-            descartar_pendente(self.base_dir)
-            self._marcar(ERRO, f"falha ao preparar a atualização: {erro}")
+
+        if not baixou:
+            # A irmã aberta viu a mesma versão e chegou antes. O pendente
+            # aparece com o nosso nome quando ela terminar; a rodada seguinte
+            # o encontra e marca "pronto".
+            self._marcar(DISPONIVEL, "outro programa está baixando esta versão")
             return self.estado
-        finally:
-            caminho_zip.unlink(missing_ok=True)
 
         self._progresso = 100
         self._marcar(PRONTO, "reinicie o programa para aplicar")
@@ -775,7 +1122,7 @@ class Atualizador:
                                         name="atualizacao")
         self._thread.start()
 
-    def monitorar(self, intervalo: timedelta = INTERVALO_VERIFICACAO) -> None:
+    def monitorar(self, intervalo: timedelta | None = None) -> None:
         """Repete a verificação enquanto o programa estiver aberto.
 
         Até 2026-09-04 só havia a checagem da partida: quem deixa o programa
@@ -786,20 +1133,28 @@ class Atualizador:
         `em_segundo_plano`, para não disputar aquele guarda de "já tem uma
         rodando" e travar o botão "Verificar agora".
 
-        ⚠ Sem processo e sem janela: `consultar` é `urllib` puro. A verificação
-        nunca dispara `subprocess` — o único `Popen` deste módulo é o relançar
-        do executável, que só acontece ao aplicar a troca.
+        ⚠ Sem processo e sem janela: `consultar_se_mudou` é `urllib` puro. A
+        verificação nunca dispara `subprocess` — o único `Popen` deste módulo
+        é o relançar do executável, que só acontece ao aplicar a troca.
 
         Falha é silenciosa por decisão: rede corporativa, proxy e VPN caem o
-        tempo todo, e um alarme a cada hora seria ruído para algo que não é
-        problema do usuário. Fica no log, e a hora seguinte tenta de novo.
+        tempo todo, e um alarme a cada rodada seria ruído para algo que não é
+        problema do usuário. Fica no log, e o intervalo dobra até o teto.
+
+        `intervalo` fixo é para teste; sem ele, a espera é `intervalo_atual()`,
+        que cresce com as falhas.
         """
-        # Piso de 60 s: intervalo minúsculo por engano viraria laço quente
-        # batendo no GitHub sem parar.
-        segundos = max(60.0, intervalo.total_seconds())
+        def espera() -> float:
+            if intervalo is not None:
+                segundos = intervalo.total_seconds()
+            else:
+                segundos = self.intervalo_atual().total_seconds()
+            # Piso de 60 s: intervalo minúsculo por engano viraria laço quente
+            # batendo no GitHub sem parar.
+            return max(60.0, segundos)
 
         def laco():
-            while not self._parar_monitor.wait(segundos):
+            while not self._parar_monitor.wait(espera()):
                 self._rodada_periodica()
 
         if self._monitor and self._monitor.is_alive():
@@ -817,7 +1172,7 @@ class Atualizador:
         if not self.config.automatica:
             return                     # desligado: só volta a dormir
         try:
-            estado = self.verificar()
+            estado = self.verificar(forcado=True)
             if estado["estado"] == DISPONIVEL:
                 self.baixar()
         except Exception:              # noqa: BLE001
@@ -829,6 +1184,6 @@ class Atualizador:
 
     def descartar(self) -> dict:
         """Joga fora o que está em espera (o usuário recusou)."""
-        descartar_pendente(self.base_dir)
+        descartar_pendente(self.base_dir, self.nome_exe)
         self._marcar(OCIOSO)
         return self.estado

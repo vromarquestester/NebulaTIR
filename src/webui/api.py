@@ -39,6 +39,7 @@ from services import (
 from services import atualizacao as _atualizacao
 from services import instancias as instancias_mod
 from services.canal import NOME_EXE, URL_MANIFESTO
+from services.familia import irmas as _irmas
 from services.instancias import Instancias
 from services.gerenciador_client import EstadoGerenciador
 from services.importados import RepositorioImportados
@@ -109,8 +110,9 @@ class Api:
             # Verifica e baixa em espera sem travar a janela. Thread daemon:
             # morre com o processo, e nada aqui merece segurar o fechamento.
             self._atualizador.em_segundo_plano()
-            # E repete de hora em hora: quem deixa o programa aberto o dia
-            # inteiro nunca via versão publicada depois de a janela abrir.
+            # E repete a cada 5 min (GET condicional, `304` sem corpo): quem
+            # deixa o programa aberto o dia inteiro nunca via versão publicada
+            # depois de a janela abrir.
             self._atualizador.monitorar()
 
     # ── ciclo de vida (privados: não vão para o JS) ──
@@ -158,6 +160,9 @@ class Api:
             url_manifesto=URL_MANIFESTO,
             versao_atual=__version__,
             config=config,
+            # As outras ferramentas da mesma pasta: quem verifica, verifica
+            # para todas, e deixa a atualização delas em espera.
+            irmas=_irmas(NOME_EXE),
         )
 
     def atualizacao_estado(self) -> dict:

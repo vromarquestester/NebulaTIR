@@ -1833,6 +1833,22 @@ label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
   overflow-y: auto;
 }
 .upd-changelog li { margin: 3px 0; }
+.upd-familia {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+.upd-familia li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+.upd-familia .upd-familia-nome { flex: 1; }
+.upd-familia .upd-familia-versao { color: hsl(var(--fg-faint)); }
+.upd-familia .upd-familia-msg { color: hsl(var(--fg-faint)); font-size: 12px; }
+.upd-familia [data-state="pronto"] .upd-familia-msg { color: hsl(var(--accent)); }
+.upd-familia [data-state="erro"] .upd-familia-msg { color: hsl(var(--danger)); }
 .upd-trilho {
   height: 6px;
   border-radius: 3px;

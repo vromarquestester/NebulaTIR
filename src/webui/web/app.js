@@ -918,12 +918,51 @@ function pintarModalUpdate(extra) {
     $('#upd-changelog').appendChild(li);
   });
 
+  pintarFamiliaUpdate(u.familia || []);
+
   $('#chk-upd-auto').checked = u.automatica !== false;
   $('#btn-upd-baixar').hidden = u.estado !== 'disponivel';
   $('#btn-upd-reiniciar').hidden = u.estado !== 'pronto';
   $('#btn-upd-verificar').disabled = u.estado === 'verificando'
                                   || u.estado === 'baixando';
   $('#btn-upd-reverter').hidden = u.pode_reverter !== true;
+}
+
+/* As irmãs instaladas ao lado. `ausente` não aparece: ferramenta que não está
+   nesta pasta não é notícia. O que se mostra é fato observado — versão lida
+   do exe dela e o que a vitrine dela publicou. */
+const ROTULO_FAMILIA = {
+  'em-dia':   'em dia',
+  disponivel: 'versão nova (baixe pelo próprio programa)',
+  baixando:   'baixando…',
+  pronto:     'baixada — entra quando abrir',
+  erro:       'falhou',
+};
+
+function pintarFamiliaUpdate(familia) {
+  const visiveis = familia.filter(f => f.estado !== 'ausente');
+  $('#upd-familia-box').hidden = visiveis.length === 0;
+  const lista = $('#upd-familia');
+  lista.innerHTML = '';
+  visiveis.forEach(f => {
+    const li = document.createElement('li');
+    li.dataset.state = f.estado;
+    const nome = document.createElement('span');
+    nome.className = 'upd-familia-nome';
+    nome.textContent = f.nome;
+    const versao = document.createElement('span');
+    versao.className = 'upd-familia-versao';
+    versao.setAttribute('data-numeric', '');
+    versao.textContent = f.versao_nova && f.versao_nova !== f.versao_atual
+      ? `${f.versao_atual} → ${f.versao_nova}` : (f.versao_atual || '—');
+    const msg = document.createElement('span');
+    msg.className = 'upd-familia-msg';
+    // Erro traz a causa (vem de arquivo externo: nunca innerHTML).
+    msg.textContent = f.estado === 'erro'
+      ? (f.mensagem || 'falhou') : (ROTULO_FAMILIA[f.estado] || f.estado);
+    li.append(nome, versao, msg);
+    lista.appendChild(li);
+  });
 }
 
 async function abrirAtualizacao() {

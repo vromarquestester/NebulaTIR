@@ -30,4 +30,6 @@
 - Botao "Atualizacao" fixo na barra: da para verificar a qualquer momento, mesmo sem aviso pendente.
 - Botao "Reiniciar agora" quando a versao nova ja esta baixada: fecha, aplica e reabre sozinho.
 - A copia da versao anterior fica guardada dentro de update/, fora da pasta do programa, e continua servindo para o "Voltar a versao anterior".
-- A verificacao de versao nova passou a repetir de hora em hora enquanto o programa esta aberto.
+- A verificacao de versao nova repete a cada 5 minutos enquanto o programa esta aberto, sem custo: so baixa o manifesto quando ele mudou, e em falha de rede espaca as tentativas ate 1 hora.
+- O programa tambem confere as outras ferramentas da mesma pasta (o Gerenciador de Ambientes): versao nova delas e baixada em espera e entra quando aquele programa abrir. A janela Atualizacao mostra a situacao de cada uma.
+- Corrigido: a atualizacao em espera de uma ferramenta era apagada quando a outra abria na mesma pasta.
