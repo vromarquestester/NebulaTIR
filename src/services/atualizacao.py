@@ -127,6 +127,11 @@ INTERVALO_REGISTRO = timedelta(hours=1)
 TIMEOUT_MANIFESTO = 15
 TIMEOUT_DOWNLOAD = 300
 CHUNK = 262144
+# O download passa por proxy corporativo e pelo CDN do GitHub; `504 Gateway
+# Time-out` e conexão caída no meio acontecem e não são motivo para desistir.
+# Tenta de novo com espera crescente, retomando de onde parou (`Range`).
+TENTATIVAS_DOWNLOAD = 4
+ESPERAS_DOWNLOAD = (2, 5, 10)
 
 # Estados que a interface mostra.
 DESLIGADO = "desligado"
@@ -341,34 +346,67 @@ def sha256_do_arquivo(caminho: Path, on_progress=None) -> str:
 
 
 def _baixar_simples(url: str, destino: Path, on_progress=None) -> Path:
-    """Download de fluxo único, só com a biblioteca padrão.
+    """Download de fluxo único, só com a biblioteca padrão, com retomada.
 
     O zip de uma release fica na casa das dezenas de MB — abaixo do piso em que
     o download segmentado do Gerenciador se paga. Quem quiser outro caminho
     injeta `baixador` no `Atualizador`.
+
+    Falha de rede ou `5xx` (o `504` do proxy foi visto em 2026-09-14) repete
+    até `TENTATIVAS_DOWNLOAD`, esperando `ESPERAS_DOWNLOAD` entre uma e outra,
+    e pede `Range` a partir do que já está no `.parcial` — o CDN do GitHub
+    aceita. Servidor que ignora o `Range` (responde `200`) recomeça do zero.
+    `4xx` não repete: o arquivo não está lá, esperar não muda isso.
     """
-    req = urllib.request.Request(url, headers={"User-Agent": "atualizador"})
     destino.parent.mkdir(parents=True, exist_ok=True)
     parcial = destino.with_suffix(destino.suffix + ".parcial")
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_DOWNLOAD) as r:
-            total = int(r.headers.get("Content-Length") or 0)
-            baixado = 0
-            with parcial.open("wb") as f:
-                while True:
-                    bloco = r.read(CHUNK)
-                    if not bloco:
-                        break
-                    f.write(bloco)
-                    baixado += len(bloco)
-                    if on_progress:
-                        on_progress(baixado, total)
-    except (urllib.error.URLError, TimeoutError, OSError) as erro:
-        parcial.unlink(missing_ok=True)
-        raise ErroAtualizacao(f"Falha no download: {erro}")
+    parcial.unlink(missing_ok=True)
+    ultimo_erro = None
+    for tentativa in range(TENTATIVAS_DOWNLOAD):
+        if tentativa:
+            espera = ESPERAS_DOWNLOAD[min(tentativa - 1, len(ESPERAS_DOWNLOAD) - 1)]
+            log.warning("[UPD] download falhou (%s); nova tentativa em %ss.",
+                        ultimo_erro, espera)
+            time.sleep(espera)
+        try:
+            _baixar_trecho(url, parcial, on_progress)
+            parcial.replace(destino)
+            return destino
+        except urllib.error.HTTPError as erro:
+            if erro.code == 416:          # já temos tudo: o servidor não tem mais
+                parcial.replace(destino)
+                return destino
+            ultimo_erro = erro
+            if erro.code < 500:
+                break
+        except (urllib.error.URLError, TimeoutError, OSError) as erro:
+            ultimo_erro = erro
+    parcial.unlink(missing_ok=True)
+    raise ErroAtualizacao(f"Falha no download: {ultimo_erro}")
 
-    parcial.replace(destino)
-    return destino
+
+def _baixar_trecho(url: str, parcial: Path, on_progress=None) -> None:
+    """Uma tentativa: baixa para `parcial`, continuando do tamanho atual."""
+    ja_tem = parcial.stat().st_size if parcial.exists() else 0
+    cabecalhos = {"User-Agent": "atualizador"}
+    if ja_tem:
+        cabecalhos["Range"] = f"bytes={ja_tem}-"
+    req = urllib.request.Request(url, headers=cabecalhos)
+    with urllib.request.urlopen(req, timeout=TIMEOUT_DOWNLOAD) as r:
+        retomando = ja_tem and r.status == 206
+        tamanho = int(r.headers.get("Content-Length") or 0)
+        total = ja_tem + tamanho if retomando else tamanho
+        baixado = ja_tem if retomando else 0
+        modo = "ab" if retomando else "wb"
+        with parcial.open(modo) as f:
+            while True:
+                bloco = r.read(CHUNK)
+                if not bloco:
+                    break
+                f.write(bloco)
+                baixado += len(bloco)
+                if on_progress:
+                    on_progress(baixado, total)
 
 
 def limpar_marca_da_internet(caminho: Path) -> None:
@@ -1006,6 +1044,10 @@ class Atualizador:
                 "pode_reverter": pode_reverter(self.base_dir, self.nome_exe),
                 "pendente": bool(pendente),
                 "intervalo_seg": int(self.intervalo_atual().total_seconds()),
+                "ultima_verificacao": self.config.ultima_verificacao or "",
+                "incluir_prerelease": bool(self.config.incluir_prerelease),
+                "pasta": str(self.base_dir),
+                "vitrine": self.url_manifesto,
                 "familia": [dict(v) for v in self._familia.values()],
             }
 

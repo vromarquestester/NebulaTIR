@@ -1833,6 +1833,8 @@ label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
   overflow-y: auto;
 }
 .upd-changelog li { margin: 3px 0; }
+.abas-config { margin-top: -4px; }
+.upd-linha .mono { font-size: 12px; word-break: break-all; text-align: right; }
 .upd-familia {
   list-style: none;
   margin: 0 0 10px;

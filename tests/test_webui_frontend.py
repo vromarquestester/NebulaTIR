@@ -396,5 +396,18 @@ def test_atualizacao_tem_caminho_permanente_e_reinicio():
     # verificar à mão. E a versão baixada se aplica sem sair e abrir de novo.
     assert 'id="btn-atualizacao"' in HTML
     assert 'id="btn-upd-reiniciar"' in HTML
-    assert "$('#btn-atualizacao').addEventListener('click', abrirAtualizacao)" in JS
+    assert "$('#btn-atualizacao').addEventListener('click', () => abrirAtualizacao())" in JS
     assert "api.fechar_janela(true)" in JS
+
+
+def test_configuracoes_tem_abas_atualizacao_e_sobre_e_prerelease():
+    """O botão fixo virou "Configurações", como no Gerenciador: verificar,
+    ligar/desligar o automático, aceitar pré-lançamento e voltar versão num
+    lugar só, mais a aba Sobre com pasta e vitrine."""
+    assert "Configurações" in HTML
+    for id_ in ("aba-cfg-atualizacao", "aba-cfg-sobre", "painel-cfg-atualizacao",
+                "painel-cfg-sobre", "chk-upd-auto", "chk-upd-prerelease",
+                "btn-upd-verificar", "btn-upd-reverter", "sobre-pasta", "sobre-vitrine"):
+        assert f'id="{id_}"' in HTML, id_
+    assert "api.atualizacao_configurar(null, ev.target.checked)" in JS
+    assert "function trocarAbaConfig" in JS

@@ -53,10 +53,11 @@
       <!-- Espelho somente-leitura: quem troca a conexão é o Gerenciador. -->
       <span class="conexao-espelho mono" id="conexao-ativa" title="Definida no Gerenciador de Ambientes">—</span>
       <span class="badge" id="badge-op" hidden></span>
-      <!-- Caminho permanente para a atualização: o chip só aparece com
-           pendência, e sem ele não havia como verificar à mão. -->
-      <button type="button" class="btn btn-ghost" id="btn-atualizacao" title="Verificar atualizações">
-        <span aria-hidden="true">⇪</span> Atualização
+      <!-- Caminho permanente para a atualização (verificar, ligar/desligar o
+           automático, voltar versão): o chip só aparece com pendência, e sem
+           isto não havia como chegar lá. Mesmo lugar que no Gerenciador. -->
+      <button type="button" class="btn btn-ghost" id="btn-atualizacao" title="Configurações do programa">
+        <span aria-hidden="true">⚙</span> Configurações
       </button>
     </div>
   </header>
@@ -580,11 +581,19 @@
     <div class="modal modal-narrow" role="dialog" aria-modal="true"
          aria-labelledby="tit-modal-upd">
       <div class="modal-head">
-        <h2 id="tit-modal-upd">Atualização</h2>
+        <h2 id="tit-modal-upd">Configurações</h2>
         <button type="button" class="icon-btn" id="btn-fechar-upd" aria-label="Fechar">✕</button>
       </div>
 
       <div class="modal-body">
+        <div class="abas abas-config" role="tablist" aria-label="Configurações">
+          <button type="button" class="aba" id="aba-cfg-atualizacao" role="tab"
+                  aria-selected="true" aria-controls="painel-cfg-atualizacao">Atualização</button>
+          <button type="button" class="aba" id="aba-cfg-sobre" role="tab"
+                  aria-selected="false" aria-controls="painel-cfg-sobre" tabindex="-1">Sobre</button>
+        </div>
+
+        <div id="painel-cfg-atualizacao" role="tabpanel" aria-labelledby="aba-cfg-atualizacao">
         <p class="upd-linha">
           <span>Versão instalada</span>
           <strong id="upd-versao-atual" data-numeric>—</strong>
@@ -622,8 +631,28 @@
         <p class="hint">
           Com isto desligado, nada é baixado sozinho — mas você ainda pode
           verificar a qualquer momento. A troca acontece ao reiniciar o
-          programa, com ele fechado.
+          programa, com ele fechado. Ligado, o programa verifica ao abrir e
+          a cada 5 minutos, e também deixa pronta a atualização das outras
+          ferramentas da mesma pasta.
         </p>
+        <label class="check-inline">
+          <input type="checkbox" id="chk-upd-prerelease">
+          <span>Aceitar pré-lançamentos (beta, rc)</span>
+        </label>
+        </div>
+
+        <div id="painel-cfg-sobre" role="tabpanel" aria-labelledby="aba-cfg-sobre" hidden>
+          <p class="upd-linha"><span>Programa</span><strong>NebulaTIR</strong></p>
+          <p class="upd-linha"><span>Versão</span><strong id="sobre-versao" data-numeric>—</strong></p>
+          <p class="upd-linha"><span>Pasta</span><span class="mono" id="sobre-pasta">—</span></p>
+          <p class="upd-linha"><span>Vitrine</span><span class="mono" id="sobre-vitrine">—</span></p>
+          <p class="upd-linha"><span>Última verificação</span><span id="sobre-ultima" data-numeric>—</span></p>
+          <p class="upd-linha"><span>Próxima verificação</span><span id="sobre-intervalo" data-numeric>—</span></p>
+          <p class="hint">
+            O NebulaTIR não roda sem o Gerenciador de Ambientes: os dois vivem
+            na mesma pasta e cada um troca só o próprio executável.
+          </p>
+        </div>
       </div>
 
       <div class="modal-foot">

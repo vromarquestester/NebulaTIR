@@ -638,3 +638,87 @@ def test_preparar_partida_com_titulo_usa_a_janela(instalado, monkeypatch):
     assert upd.preparar_partida(instalado, NOME_EXE, titulo="NebulaTIR") \
         == instalado / NOME_EXE
     assert chamadas == ["NebulaTIR"]
+
+
+# =============================================================
+# DOWNLOAD: repete em 5xx e retoma de onde parou
+# =============================================================
+
+class _Resposta:
+    def __init__(self, status, corpo, cabecalhos):
+        self.status, self._corpo, self.headers = status, corpo, cabecalhos
+        self._pos = 0
+
+    def read(self, n):
+        pedaco = self._corpo[self._pos:self._pos + n]
+        self._pos += n
+        return pedaco
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+
+def _servidor_de_download(monkeypatch, conteudo: bytes, roteiro: list):
+    """`roteiro`: por tentativa, 'ok', 'corta:<n>' (manda n bytes e cai),
+    ou um código HTTP (int). Registra os Range recebidos."""
+    import urllib.error
+    ranges = []
+    monkeypatch.setattr(upd, "ESPERAS_DOWNLOAD", (0, 0, 0))
+
+    def urlopen(req, timeout=0):
+        passo = roteiro.pop(0)
+        ranges.append(req.get_header("Range"))
+        inicio = int(ranges[-1].split("=")[1].rstrip("-")) if ranges[-1] else 0
+        if isinstance(passo, int):
+            raise urllib.error.HTTPError(req.full_url, passo, "erro", {}, None)
+        corpo = conteudo[inicio:]
+        if passo.startswith("corta:"):
+            n = int(passo.split(":")[1])
+            class Cai(_Resposta):
+                def read(self, k):
+                    if self._pos >= n:
+                        raise ConnectionResetError("caiu")
+                    return super().read(min(k, n - self._pos))
+            return Cai(206 if inicio else 200, corpo, {"Content-Length": str(len(corpo))})
+        return _Resposta(206 if inicio else 200, corpo, {"Content-Length": str(len(corpo))})
+
+    monkeypatch.setattr(upd.urllib.request, "urlopen", urlopen)
+    return ranges
+
+
+def test_504_e_repetido_e_o_download_termina(tmp_path, monkeypatch):
+    """O erro visto no 'Instalar NebulaTIR' em 2026-09-14: `HTTP Error 504:
+    Gateway Time-out`. Um proxy mal-humorado não pode ser o fim da linha."""
+    ranges = _servidor_de_download(monkeypatch, b"x" * 1000, [504, 504, "ok"])
+    destino = tmp_path / "a.zip"
+    assert upd._baixar_simples("https://x/a.zip", destino) == destino
+    assert destino.read_bytes() == b"x" * 1000
+    assert ranges == [None, None, None]
+
+
+def test_conexao_cortada_retoma_de_onde_parou(tmp_path, monkeypatch):
+    conteudo = bytes(range(256)) * 10
+    ranges = _servidor_de_download(monkeypatch, conteudo, ["corta:1000", "ok"])
+    vistos = []
+    destino = tmp_path / "a.zip"
+    upd._baixar_simples("https://x/a.zip", destino, lambda b, t: vistos.append((b, t)))
+    assert destino.read_bytes() == conteudo
+    assert ranges == [None, "bytes=1000-"]
+    assert vistos[-1] == (len(conteudo), len(conteudo))    # progresso soma o retomado
+
+
+def test_404_nao_repete(tmp_path, monkeypatch):
+    ranges = _servidor_de_download(monkeypatch, b"x", [404, "ok"])
+    with pytest.raises(upd.ErroAtualizacao, match="404"):
+        upd._baixar_simples("https://x/a.zip", tmp_path / "a.zip")
+    assert len(ranges) == 1
+    assert not (tmp_path / "a.zip.parcial").exists()
+
+
+def test_esgota_as_tentativas_e_explica(tmp_path, monkeypatch):
+    _servidor_de_download(monkeypatch, b"x", [504] * upd.TENTATIVAS_DOWNLOAD)
+    with pytest.raises(upd.ErroAtualizacao, match="504"):
+        upd._baixar_simples("https://x/a.zip", tmp_path / "a.zip")

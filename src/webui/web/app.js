@@ -921,6 +921,14 @@ function pintarModalUpdate(extra) {
   pintarFamiliaUpdate(u.familia || []);
 
   $('#chk-upd-auto').checked = u.automatica !== false;
+  $('#chk-upd-prerelease').checked = u.incluir_prerelease === true;
+  $('#sobre-versao').textContent = u.versao_atual || '—';
+  $('#sobre-pasta').textContent = u.pasta || '—';
+  $('#sobre-vitrine').textContent = u.vitrine || '—';
+  $('#sobre-ultima').textContent = u.ultima_verificacao
+    ? new Date(u.ultima_verificacao).toLocaleString('pt-BR') : 'nunca';
+  $('#sobre-intervalo').textContent = u.automatica === false ? 'desligada'
+    : `a cada ${Math.round((u.intervalo_seg || 300) / 60)} min`;
   $('#btn-upd-baixar').hidden = u.estado !== 'disponivel';
   $('#btn-upd-reiniciar').hidden = u.estado !== 'pronto';
   $('#btn-upd-verificar').disabled = u.estado === 'verificando'
@@ -966,9 +974,26 @@ function pintarFamiliaUpdate(familia) {
   });
 }
 
-async function abrirAtualizacao() {
+/* Abas do modal de Configurações. Separadas das abas do painel central
+   (ABAS/trocarAba), que têm o próprio estado. */
+const ABAS_CONFIG = [
+  { aba: '#aba-cfg-atualizacao', painel: '#painel-cfg-atualizacao' },
+  { aba: '#aba-cfg-sobre',       painel: '#painel-cfg-sobre'       },
+];
+
+function trocarAbaConfig(alvo) {
+  for (const { aba, painel } of ABAS_CONFIG) {
+    const ativa = aba === alvo;
+    $(aba).setAttribute('aria-selected', String(ativa));
+    $(aba).tabIndex = ativa ? 0 : -1;
+    $(painel).hidden = !ativa;
+  }
+}
+
+async function abrirAtualizacao(aba = '#aba-cfg-atualizacao') {
   await atualizarUpdate();
   pintarModalUpdate();
+  trocarAbaConfig(aba);
   abrirModal('overlay-atualizacao');
 }
 
@@ -1619,8 +1644,11 @@ function ligarEventos() {
   $('#btn-limpar-resultado').addEventListener('click', limparResultados);
 
   // ── atualização do programa ──
-  $('#chip-update').addEventListener('click', abrirAtualizacao);
-  $('#btn-atualizacao').addEventListener('click', abrirAtualizacao);
+  $('#chip-update').addEventListener('click', () => abrirAtualizacao());
+  $('#btn-atualizacao').addEventListener('click', () => abrirAtualizacao());
+  for (const { aba } of ABAS_CONFIG) {
+    $(aba).addEventListener('click', () => trocarAbaConfig(aba));
+  }
   $('#btn-fechar-upd').addEventListener('click',
     () => fecharModal('overlay-atualizacao'));
 
@@ -1639,6 +1667,10 @@ function ligarEventos() {
 
   $('#chk-upd-auto').addEventListener('change', async (ev) => {
     await api.atualizacao_configurar(ev.target.checked, null);
+    await atualizarUpdate();
+  });
+  $('#chk-upd-prerelease').addEventListener('change', async (ev) => {
+    await api.atualizacao_configurar(null, ev.target.checked);
     await atualizarUpdate();
   });
 
