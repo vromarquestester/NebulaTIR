@@ -73,6 +73,14 @@
 /* ── Reset ─────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 * { margin: 0; }
+/* ⚠ O atributo `hidden` só esconde enquanto o `display` está no valor padrão:
+   qualquer regra que diga `display: flex/grid/block` ganha dele. O chip de
+   atualização é `inline-flex` e ficava permanentemente visível na barra com
+   o texto de exemplo do HTML ("Atualização", bolinha cinza), mesmo com o
+   `hidden` posto pelo JS — visto na 0.3.3 em 15/09. Mesma regra e mesma razão
+   do Gerenciador: `[hidden]` tem especificidade de classe e as regras de
+   componente vêm depois; só o `!important` fecha isso para sempre. */
+[hidden] { display: none !important; }
 
 /* App é dark-only: avisa o motor de render para que scrollbars, seleção,
    caret e widgets nativos nasçam escuros. */

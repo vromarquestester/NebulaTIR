@@ -391,6 +391,13 @@ def test_desligar_o_automatico_nao_esconde_o_verificar_agora():
     assert "verificando" in trecho and "baixando" in trecho
 
 
+def test_hidden_vence_qualquer_display():
+    """O chip é `inline-flex`; sem esta regra o `hidden` do JS não escondia
+    nada e a barra mostrava "Atualização" o tempo todo (0.3.3, 15/09/2026)."""
+    assert "[hidden] { display: none !important; }" in CSS
+    assert CSS.index("[hidden] { display: none !important; }") < CSS.index(".status-chip {")
+
+
 def test_chip_so_aparece_com_pendencia_e_nunca_por_erro():
     """Mesma regra do Gerenciador: o chip é para agir (baixar, esperar,
     reiniciar). Falha de rede não é pendência do usuário — fica no log e em
