@@ -402,6 +402,21 @@ def test_chip_so_aparece_com_pendencia_e_nunca_por_erro():
     assert '.status-chip[data-state="pendente"]' in CSS
 
 
+def test_aba_sobre_segue_o_padrao_das_ferramentas():
+    """Regra do usuário (15/09/2026): toda aba Sobre mostra programa, versão,
+    pasta, vitrine, última/próxima verificação e, no fim, o autor em texto
+    discreto. E o modal não é o estreito: caminho e URL precisam de largura."""
+    depois = HTML.split('id="painel-cfg-sobre"')[1]
+    sobre = depois.split('</div>')[0]
+    for campo in ("sobre-versao", "sobre-pasta", "sobre-vitrine",
+                  "sobre-ultima", "sobre-intervalo"):
+        assert f'id="{campo}"' in sobre
+    assert sobre.rstrip().endswith('<p class="sobre-autor">Desenvolvido por Vinicius Marques</p>')
+    assert 'class="sobre-linhas"' in depois[:60]
+    assert ".sobre-linhas .upd-linha {" in CSS and "grid-template-columns" in CSS
+    assert "modal-narrow" not in HTML.split('id="overlay-atualizacao"')[1][:400]
+
+
 def test_atualizacao_tem_caminho_permanente_e_reinicio():
     # O chip só aparece com pendência; sem um botão fixo não havia como
     # verificar à mão. E a versão baixada se aplica sem sair e abrir de novo.

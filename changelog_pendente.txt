@@ -23,3 +23,4 @@
 # ⚠ Nao empurre linhas novas para a main entre criar a tag e o build terminar:
 # a CI zera o arquivo inteiro, e o que entrou nesse intervalo se perderia.
 - Chip de atualização na barra só com pendência (disponível, baixando, reinicie), em amarelo — igual ao Gerenciador; falha de rede não aparece mais na barra
+- Configurações mais larga; aba Sobre com rótulo e valor alinhados em colunas e o autor no rodapé

@@ -578,7 +578,9 @@
 
   <!-- ───────────── Modal: atualização do programa ───────────── -->
   <div class="overlay" id="overlay-atualizacao" hidden>
-    <div class="modal modal-narrow" role="dialog" aria-modal="true"
+    <!-- Largura padrão do modal, não a estreita: pasta e vitrine da aba Sobre
+         são caminhos longos, e a 520px o valor invadia o rótulo. -->
+    <div class="modal" role="dialog" aria-modal="true"
          aria-labelledby="tit-modal-upd">
       <div class="modal-head">
         <h2 id="tit-modal-upd">Configurações</h2>
@@ -641,7 +643,7 @@
         </label>
         </div>
 
-        <div id="painel-cfg-sobre" role="tabpanel" aria-labelledby="aba-cfg-sobre" hidden>
+        <div id="painel-cfg-sobre" class="sobre-linhas" role="tabpanel" aria-labelledby="aba-cfg-sobre" hidden>
           <p class="upd-linha"><span>Programa</span><strong>NebulaTIR</strong></p>
           <p class="upd-linha"><span>Versão</span><strong id="sobre-versao" data-numeric>—</strong></p>
           <p class="upd-linha"><span>Pasta</span><span class="mono" id="sobre-pasta">—</span></p>
@@ -652,6 +654,8 @@
             O NebulaTIR não roda sem o Gerenciador de Ambientes: os dois vivem
             na mesma pasta e cada um troca só o próprio executável.
           </p>
+          <!-- Autor no fim, discreto — padrão de toda aba Sobre das ferramentas. -->
+          <p class="sobre-autor">Desenvolvido por Vinicius Marques</p>
         </div>
       </div>
 

@@ -1843,7 +1843,27 @@ label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
 }
 .upd-changelog li { margin: 3px 0; }
 .abas-config { margin-top: -4px; }
-.upd-linha .mono { font-size: 12px; word-break: break-all; text-align: right; }
+/* Aba Sobre — padrão de todas as ferramentas (regra do usuário, 15/09/2026):
+   rótulo em coluna fixa e valor à esquerda em coluna própria, para caminho e
+   URL longos não empurrarem o rótulo nem quebrarem no meio do rótulo. */
+.sobre-linhas .upd-linha {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  justify-content: start;
+  align-items: baseline;
+}
+.sobre-linhas .upd-linha > :first-child { color: hsl(var(--fg-faint)); }
+.sobre-linhas .upd-linha > :last-child { text-align: left; }
+.sobre-linhas .mono { font-size: 12px; overflow-wrap: anywhere; }
+/* Rodapé discreto com o autor: informação de crédito, não de uso. */
+.sobre-autor {
+  margin-top: 18px;
+  padding-top: 10px;
+  border-top: 1px solid hsl(var(--border));
+  font-size: 11px;
+  color: hsl(var(--fg-faint));
+  text-align: right;
+}
 .upd-familia {
   list-style: none;
   margin: 0 0 10px;
