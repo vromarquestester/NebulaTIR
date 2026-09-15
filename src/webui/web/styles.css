@@ -1808,10 +1808,19 @@ label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
   background: transparent;
 }
 .chip-btn:hover { border-color: hsl(var(--accent) / .55); }
-/* Atualização baixada e esperando o reinício. Usa o acento, não o verde de
-   "ok": não é um estado saudável, é uma pendência do usuário. */
-.status-chip[data-state="pronto"] { color: hsl(var(--accent)); border-color: hsl(var(--accent) / .5); }
-.status-chip[data-state="pronto"] .dot { background: hsl(var(--accent)); box-shadow: 0 0 10px hsl(var(--accent) / .8); }
+/* Atualização pendente — disponível, baixando ou esperando o reinício.
+   Amarelo, não verde: não é um estado saudável, é uma pendência do usuário. E
+   não vermelho, que este chip divide a barra com o link do Gerenciador, onde
+   vermelho quer dizer "está quebrado". O chip só existe quando há pendência;
+   sem ela ele some, em vez de virar um "em dia" permanente que ninguém lê. */
+.status-chip[data-state="pendente"] {
+  color: hsl(var(--warn));
+  border-color: hsl(var(--warn) / .5);
+}
+.status-chip[data-state="pendente"] .dot {
+  background: hsl(var(--warn));
+  box-shadow: 0 0 10px hsl(var(--warn) / .8);
+}
 
 .upd-linha {
   display: flex;

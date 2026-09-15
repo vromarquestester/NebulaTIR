@@ -851,12 +851,15 @@ async function loopStatus() {
 /* ── Atualização do programa ───────────────────────────── */
 
 /* O que cada estado mostra no chip da barra. Ausente = chip escondido: em dia,
-   ocioso e desligado não são notícia, e chip permanente vira ruído fixo. */
+   ocioso e desligado não são notícia, e chip permanente vira ruído fixo.
+   `erro` também não aparece (igual ao Gerenciador): rede corporativa, proxy e
+   VPN caem o tempo todo, e um chip vermelho a cada 5 min seria alarme fixo
+   para algo que não é problema do usuário — a rodada seguinte tenta de novo.
+   A causa fica no log e em Configurações → Atualização. */
 const ROTULO_UPDATE = {
   disponivel: 'Atualização disponível',
   baixando:   'Baixando atualização…',
   pronto:     'Reinicie para atualizar',
-  erro:       'Falha ao atualizar',
 };
 
 let ticksUpdate = 0;
@@ -877,8 +880,9 @@ function pintarChipUpdate() {
   const rotulo = ROTULO_UPDATE[u.estado];
   chipEl.hidden = !rotulo;
   if (!rotulo) return;
-  chipEl.dataset.state = u.estado === 'erro' ? 'off'
-                       : u.estado === 'pronto' ? 'pronto' : 'unknown';
+  // Amarelo em todos os estados que aparecem: os três são "tem coisa
+  // pendente". Verde diria "está tudo certo, não faça nada", que é o oposto.
+  chipEl.dataset.state = 'pendente';
   $('#chip-update-text').textContent =
     u.estado === 'baixando' ? `Baixando… ${u.progresso}%` : rotulo;
 }

@@ -391,6 +391,17 @@ def test_desligar_o_automatico_nao_esconde_o_verificar_agora():
     assert "verificando" in trecho and "baixando" in trecho
 
 
+def test_chip_so_aparece_com_pendencia_e_nunca_por_erro():
+    """Mesma regra do Gerenciador: o chip é para agir (baixar, esperar,
+    reiniciar). Falha de rede não é pendência do usuário — fica no log e em
+    Configurações → Atualização, e a rodada seguinte tenta de novo."""
+    bloco = JS.split("const ROTULO_UPDATE = {")[1].split("};")[0]
+    assert "disponivel:" in bloco and "pronto:" in bloco and "baixando:" in bloco
+    assert "erro:" not in bloco
+    assert "chipEl.dataset.state = 'pendente';" in JS
+    assert '.status-chip[data-state="pendente"]' in CSS
+
+
 def test_atualizacao_tem_caminho_permanente_e_reinicio():
     # O chip só aparece com pendência; sem um botão fixo não havia como
     # verificar à mão. E a versão baixada se aplica sem sair e abrir de novo.
