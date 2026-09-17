@@ -22,8 +22,3 @@
 #
 # ⚠ Nao empurre linhas novas para a main entre criar a tag e o build terminar:
 # a CI zera o arquivo inteiro, e o que entrou nesse intervalo se perderia.
-- Casos de teste: nova origem "Testes locais" — escolha uma pasta com *TESTCASE.py, *TESTSUITE.py e config.json (teste da equipe, de QA ou script avulso), marque um ou mais testes e confirme como nos fontes
-- Testes locais: o config.json da pasta manda na execução; ao confirmar, o NebulaTIR confere idioma do país, POUILogin, DebugLog e navegador (Firefox) e pergunta, numa janela larga com o que foi encontrado e o esperado, se ajusta o arquivo
-- Ambientes cadastrados na mesma porta (ex.: PAR_2510 e PAR_2610 na 4321) não aparecem mais os dois "no ar" com um só de pé: a bolinha olha quem está escutando a porta; Executar recusa reaproveitar a porta do vizinho
-- As abas Configurações/Casos de teste agora encostam nos botões Executar TIR/Abortar: sumiu a fresta por onde o conteúdo passava ao rolar
-- Só uma janela do NebulaTIR por vez: abrir de novo traz a que já está aberta para a frente

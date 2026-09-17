@@ -129,11 +129,22 @@ jobs:
         $corpo | Out-File -FilePath "dist\corpo_release.md" -Encoding utf8
         Write-Host $corpo
 
+    # A release é criada pela action (tag, notas); o ZIP vai num passo à parte,
+    # com insistência. Em 2026-09-17 o upload de assets do GitHub respondeu
+    # HTTP 500 intermitente ("Error saving asset", "Error creating asset temp
+    # dir") em cinco tentativas seguidas da CI — e passava na segunda
+    # insistência feita à mão. Nem a action nem o `gh` repetem em 5xx.
     - name: Criar Release
       uses: softprops/action-gh-release@v2
       with:
-        files: dist/NebulaTIR_*.zip
         body_path: dist/corpo_release.md
+
+    - name: Anexar o ZIP à release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $zip = (Get-ChildItem "dist\NebulaTIR_*.zip")[0].FullName
+        .\scripts\anexar_release.ps1 -Repo "${{ github.repository }}" -Tag "${{ steps.version.outputs.VERSION }}" -Arquivo $zip
 
     # ─────────────────────────────────────────────────────────────
     # Distribuição pública: replica a release na vitrine, permitindo download
@@ -154,7 +165,13 @@ jobs:
         tag_name: ${{ steps.version.outputs.VERSION }}
         name: Versão ${{ steps.version.outputs.VERSION }}
         body_path: dist/corpo_release.md
-        files: dist/NebulaTIR_*.zip
+
+    - name: Anexar o ZIP à release da vitrine
+      env:
+        GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+      run: |
+        $zip = (Get-ChildItem "dist\NebulaTIR_*.zip")[0].FullName
+        .\scripts\anexar_release.ps1 -Repo "vromarquestester/NebulaTIR-Releases" -Tag "${{ steps.version.outputs.VERSION }}" -Arquivo $zip
 
     # O canal que o programa instalado consulta, em
     # raw.githubusercontent.com/<vitrine>/main/latest.json.
