@@ -1799,11 +1799,18 @@ label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
    voltar para "Configurações" viraria uma rolagem de volta ao topo. */
 .abas {
   position: sticky;
-  top: 0;
+  /* O `padding` do `.detail-scroll` fica FORA do retângulo em que o sticky
+     gruda (o Chromium desconta o padding do rolável). Com `top: 0` as abas
+     paravam 12px abaixo da borda e o conteúdo passava nessa fresta, entre os
+     botões de executar e as abas. O `top` negativo gruda na borda do padding
+     e a margem negativa põe as abas lá desde o início; o padding-top devolve
+     o espaço para o texto da aba. */
+  top: calc(-1 * var(--sp-3));
+  margin-top: calc(-1 * var(--sp-3));
   z-index: 2;
   background: hsl(var(--surface));
   /* O card que passa por baixo encostava no texto da aba. */
-  padding-top: var(--sp-1);
+  padding-top: calc(var(--sp-3) + var(--sp-1));
 }
 
 /* ── Atualização do programa ─────────────────────────────── */
@@ -1907,3 +1914,72 @@ label.switch { text-transform: none; letter-spacing: 0; margin: 0; }
   margin: 12px 0 4px;
   cursor: pointer;
 }
+
+/* ── Origem dos testes: pelos fontes ou pasta local ──────── */
+
+/* O segmentado do modo de execução ocupa a largura toda porque fica sozinho
+   na linha. Aqui ele divide o card com a pasta e a lista, e na largura toda
+   parecia um botão gigante: metade da largura basta para duas opções. */
+.segmentado-origem { width: min(420px, 100%); margin: var(--sp-2) 0 var(--sp-3); }
+
+.pasta-local {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sp-2);
+  align-items: center;
+  margin-bottom: var(--sp-2);
+}
+.pasta-local .input,
+.pasta-local .btn {
+  height: var(--altura-controle);
+  min-height: var(--altura-controle);
+}
+.pasta-local[hidden] { display: none; }
+
+/* Situação do config.json da pasta: cor pelo estado, texto sempre. */
+.config-local-status[data-estado="ok"] { color: hsl(var(--ok)); }
+.config-local-status[data-estado="aviso"] { color: hsl(var(--warn)); }
+.config-local-status[data-estado="erro"] { color: hsl(var(--danger)); }
+.config-local-status[hidden] { display: none; }
+
+/* ── Modal largo: divergências do config.json ─────────────── */
+
+/* Mais largo que o padrão (760px): quatro colunas — campo, encontrado,
+   esperado e o motivo, que é uma frase inteira — não cabem sem quebrar em
+   coluna de texto. Pedido do usuário: a lista tem que ser lida na horizontal. */
+.modal-wide { width: min(1180px, 96vw); }
+
+.divergencias {
+  display: grid;
+  gap: 0;
+  margin: var(--sp-3) 0 var(--sp-4);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-md);
+  overflow: hidden;
+  font-size: 12.5px;
+}
+.div-cabecalho,
+.div-linha {
+  display: grid;
+  grid-template-columns: 160px 170px 170px minmax(0, 1fr);
+  gap: var(--sp-3);
+  align-items: start;
+  padding: var(--sp-2) var(--sp-3);
+}
+.div-cabecalho {
+  background: hsl(var(--surface-3));
+  color: hsl(var(--fg-muted));
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.div-linha { border-top: 1px solid hsl(var(--border)); }
+.div-linha .campo-nome { font-weight: 700; }
+.div-linha .campo-chave { display: block; color: hsl(var(--fg-faint)); font-size: 11px; }
+.div-linha .encontrado { color: hsl(var(--danger)); }
+.div-linha[data-nivel="aviso"] .encontrado { color: hsl(var(--warn)); }
+.div-linha .esperado { color: hsl(var(--ok)); }
+.div-linha .motivo { color: hsl(var(--fg-muted)); }
+
+.config-local-pergunta { font-size: 13px; }
+.config-local-pergunta .muted { display: block; font-size: 11.5px; margin-top: var(--sp-1); }
