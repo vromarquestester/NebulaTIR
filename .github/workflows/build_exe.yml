@@ -121,7 +121,9 @@ jobs:
 
     - name: Montar corpo da release
       run: |
-        $mudou = python scripts/changelog.py --corpo-release
+        # `-join`: sem ele o PowerShell entrega a saída como array e "$mudou"
+        # junta as linhas com espaço — a v0.4.0 saiu com cinco mudanças numa linha.
+        $mudou = (python scripts/changelog.py --corpo-release) -join "`n"
         $corpo = "Nova versão do NebulaTIR.`n`n📦 Baixe o ``.zip`` na seção **Assets** abaixo."
         if ($mudou) { $corpo = "$corpo`n`n## O que mudou`n`n$mudou" }
         $corpo | Out-File -FilePath "dist\corpo_release.md" -Encoding utf8
