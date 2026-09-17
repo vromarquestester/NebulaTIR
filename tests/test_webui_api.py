@@ -142,8 +142,10 @@ def test_persistencia_nao_copia_dados_do_gerenciador(api, tmp_path):
     # `idioma_manual` é metadado do NebulaTIR, não espelho do Gerenciador:
     # marca que a pessoa escolheu o idioma na tela e que a correção pelo país
     # do ambiente não deve mais mexer nele.
+    # `origem_testes` e `testes_locais` são a aba "Casos de teste": de onde
+    # vêm os testes e a pasta escolhida — dado do NebulaTIR, não do Gerenciador.
     assert set(item) == {"nome", "importado_em", "config", "selecao",
-                         "idioma_manual"}
+                         "idioma_manual", "origem_testes", "testes_locais"}
     assert set(item["config"]) == set(config_tir.PADRAO)
     for espelhado in ("appserver_exe", "dbaccess_exe", "nome_banco", "estado"):
         assert espelhado not in json.dumps(dados)
@@ -598,6 +600,84 @@ def test_sem_porta_respondendo_o_estado_do_gerenciador_vale(api, monkeypatch):
         assert info["porta_responde"] is False
         # Sem porta respondendo, quem manda é o Gerenciador.
         assert info["fonte_estado"] == "gerenciador"
+
+
+def _dois_na_mesma_porta(api, bridge_falso):
+    """PAR_2510 e PAR_2610 cadastrados os dois na 4321, como no disco real."""
+    bridge_falso.payload["bancos"].append({
+        "ambiente": "PAR_2610", "nome_banco": "P1212610MNTDBPAREXP",
+        "port": "4321", "localizacao": "par", "versao": "2610",
+        "connection": "Padrão", "appserver_exe": "C:/T2610/appserver.exe",
+        "dbaccess_exe": "C:/T2610/dbaccess.exe", "ambiente_ini": "PAR_2610"})
+    bridge_falso.payload["ambientes"]["PAR_2610"] = {
+        "estado": "stopped", "provisionado": True, "tem_appserver": True,
+        "tem_dbaccess": True, "tem_ini": True}
+    bridge_falso.payload["ambientes"]["PAR_2510"]["estado"] = "stopped"
+    api._estado.atualizar()
+    api.importar_ambiente("PAR_2510")
+    api.importar_ambiente("PAR_2610")
+
+
+def test_porta_dividida_so_marca_no_ar_o_dono_do_processo(api, bridge_falso,
+                                                           monkeypatch):
+    """Dois importados na 4321 e um só de pé: a bolinha era verde nos dois."""
+    from services import appservers
+    _dois_na_mesma_porta(api, bridge_falso)
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: True)
+    chamadas = []
+
+    def dono(porta):
+        chamadas.append(porta)
+        return {"pid": 4242, "exe": r"C:\T\appserver.exe"}
+    monkeypatch.setattr(appservers, "dono_da_porta", dono)
+
+    ambientes = api.get_status()["ambientes"]
+    assert ambientes["PAR_2510"]["estado"] == "running"
+    assert ambientes["PAR_2510"]["porta_compartilhada"] is True
+    assert ambientes["PAR_2610"]["estado"] == "stopped"
+    assert ambientes["PAR_2610"]["porta_responde"] is False
+    # Um netstat por rodada, não um por ambiente.
+    assert chamadas == [4321]
+
+
+def test_porta_dividida_sem_dono_legivel_confia_na_porta(api, bridge_falso,
+                                                         monkeypatch):
+    from services import appservers
+    _dois_na_mesma_porta(api, bridge_falso)
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: True)
+    monkeypatch.setattr(appservers, "dono_da_porta",
+                        lambda porta: {"pid": 0, "exe": ""})
+    ambientes = api.get_status()["ambientes"]
+    assert ambientes["PAR_2510"]["estado"] == "running"
+    assert ambientes["PAR_2610"]["estado"] == "running"
+
+
+def test_porta_unica_nao_consulta_o_dono(api, monkeypatch):
+    from services import appservers
+    api.importar_ambiente("PAR_2510")
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: True)
+    monkeypatch.setattr(appservers, "dono_da_porta",
+                        lambda porta: pytest.fail("não devia consultar"))
+    info = api.get_status()["ambientes"]["PAR_2510"]
+    assert info["porta_compartilhada"] is False
+    assert info["estado"] == "running"
+
+
+def test_executar_recusa_porta_ocupada_pelo_vizinho(api, bridge_falso,
+                                                    monkeypatch):
+    """Reaproveitar a porta do outro ambiente mandaria o teste para ele."""
+    from services import appservers
+    _dois_na_mesma_porta(api, bridge_falso)
+    api.salvar_selecao("PAR_2610", ["MATA143"])
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: True)
+    monkeypatch.setattr(appservers, "dono_da_porta",
+                        lambda porta: {"pid": 1, "exe": r"C:\T\appserver.exe"})
+    monkeypatch.setattr(api_mod.execucao, "preparar_ambiente_python",
+                        lambda fila: {"ok": True, "versao_tir": "x"})
+    r = api.executar_tir("PAR_2610")
+    assert r["ok"] is False
+    assert "outro ambiente" in r["erro"]
+    assert api._execucao is None
 
 
 @pytest.mark.parametrize("valor", ["", None, "abc", 0, "0", "  "])

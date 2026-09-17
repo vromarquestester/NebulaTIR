@@ -62,8 +62,11 @@ class Execucao:
                  instancias: int = 1, restaurar_banco: bool = True,
                  ambientes_por_slot: list[str] | None = None,
                  config_por_ambiente: dict | None = None,
-                 religar_ambiente=None):
+                 religar_ambiente=None, config_literal: bool = False):
         self.ambiente = ambiente
+        # Testes locais: o config é o `config.json` da pasta do usuário e vai
+        # para a execução como está (ver `preparacao.preparar_rotina`).
+        self._config_literal = bool(config_literal)
         self.instancias = max(1, int(instancias))
         # Em paralelo cada trabalhador tem o SEU ambiente (e o seu banco), e é
         # nele que a restauração acontece. Em sequencial, todos apontam para o
@@ -326,7 +329,8 @@ class Execucao:
         # mesma rotina de sobrescrever a URL uma da outra.
         preparo = preparacao.preparar_rotina(
             self.ambiente, rotina, config,
-            instancia="" if ambiente == self.ambiente else ambiente)
+            instancia="" if ambiente == self.ambiente else ambiente,
+            literal=self._config_literal)
         if not preparo.get("ok"):
             self._anotar(nome, estado=FALHOU, mensagem=preparo.get("erro", ""))
             self._emitir(f"{nome}: {preparo.get('erro')}", "ERROR")

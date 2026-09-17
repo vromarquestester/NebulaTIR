@@ -113,7 +113,7 @@ def _copiar_anexos(destino: Path) -> list[str]:
 
 
 def preparar_rotina(ambiente: str, rotina: dict, config: dict,
-                    instancia: str = "") -> dict:
+                    instancia: str = "", literal: bool = False) -> dict:
     """Cria a pasta da rotina e devolve os caminhos que a execução usa.
 
     `rotina` vem do catálogo (`suite`, `case`, `rotina`, `modulo`); `config` é
@@ -123,6 +123,11 @@ def preparar_rotina(ambiente: str, rotina: dict, config: dict,
     nomeia o `config.json`: sem isso, duas fatias da mesma rotina rodando em
     instâncias diferentes sobrescrevem o arquivo uma da outra e acabam as duas
     no mesmo AppServer.
+
+    `literal` é o modo dos testes locais: o `config` é o `config.json` da
+    pasta do usuário e vai como está — sem normalizar, sem trava, sem
+    descartar chave. A única troca é o `LogFolder`, que precisa apontar para a
+    pasta desta rotina para o relatório achar o log.
     """
     nome = rotina.get("rotina") or ""
     suite = Path(rotina.get("suite") or "")
@@ -146,7 +151,10 @@ def preparar_rotina(ambiente: str, rotina: dict, config: dict,
 
     # O LogFolder aponta para a pasta desta rotina — é o que separa os logs de
     # COMA222 dos de MATA101N, e o que o usuário pediu.
-    config_final = config_tir.normalizar({**config, "LogFolder": str(pasta_log)})
+    if literal:
+        config_final = {**config, "LogFolder": str(pasta_log)}
+    else:
+        config_final = config_tir.normalizar({**config, "LogFolder": str(pasta_log)})
 
     arquivo_config = destino / nome_do_config(instancia)
     arquivo_config.write_text(

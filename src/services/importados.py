@@ -32,6 +32,23 @@ CONFIG_DIR = BASE_DIR / "config"
 ARQUIVO = CONFIG_DIR / "ambientes_importados.json"
 
 
+ORIGEM_FONTES = "fontes"
+ORIGEM_LOCAL = "local"
+ORIGENS = (ORIGEM_FONTES, ORIGEM_LOCAL)
+
+
+def _origem(valor) -> str:
+    return valor if valor in ORIGENS else ORIGEM_FONTES
+
+
+def _locais(valor) -> dict:
+    """`{"pasta": str, "selecao": [str]}`, tolerando arquivo antigo ou sujo."""
+    if not isinstance(valor, dict):
+        return {"pasta": "", "selecao": []}
+    return {"pasta": str(valor.get("pasta") or "").strip(),
+            "selecao": [str(r) for r in (valor.get("selecao") or []) if r]}
+
+
 class RepositorioImportados:
     """Lista ordenada de nomes de ambiente, persistida em JSON."""
 
@@ -67,6 +84,12 @@ class RepositorioImportados:
                     # `pt-BR` foi aplicado cego na importação e derrubava
                     # toda suite de localização hispânica.
                     "idioma_manual": bool(item.get("idioma_manual")),
+                    # Aba "Casos de teste": de onde vêm os testes (`fontes` é
+                    # o catálogo por país; `local` é uma pasta escolhida) e o
+                    # que foi escolhido na pasta local. Seleções separadas:
+                    # trocar de origem não pode apagar a outra.
+                    "origem_testes": _origem(item.get("origem_testes")),
+                    "testes_locais": _locais(item.get("testes_locais")),
                 })
         return normalizados
 
@@ -107,6 +130,8 @@ class RepositorioImportados:
             "config": dict(config or {}),
             "selecao": [],
             "idioma_manual": False,
+            "origem_testes": ORIGEM_FONTES,
+            "testes_locais": _locais(None),
         })
         self._salvar()
         log.info("[IMPORT] Ambiente '%s' importado para o NebulaTIR.", nome)
@@ -124,6 +149,49 @@ class RepositorioImportados:
                 item["selecao"] = list(dict.fromkeys(rotinas or []))
                 self._salvar()
                 return {"ok": True, "selecao": item["selecao"]}
+        return {"ok": False, "erro": "Ambiente não está importado."}
+
+    # ── origem dos testes e pasta local ──
+    def origem_testes(self, nome: str) -> str:
+        for item in self._itens:
+            if item["nome"] == nome:
+                return _origem(item.get("origem_testes"))
+        return ORIGEM_FONTES
+
+    def salvar_origem_testes(self, nome: str, origem: str) -> dict:
+        for item in self._itens:
+            if item["nome"] == nome:
+                item["origem_testes"] = _origem(origem)
+                self._salvar()
+                return {"ok": True, "origem": item["origem_testes"]}
+        return {"ok": False, "erro": "Ambiente não está importado."}
+
+    def testes_locais(self, nome: str) -> dict:
+        for item in self._itens:
+            if item["nome"] == nome:
+                return _locais(item.get("testes_locais"))
+        return _locais(None)
+
+    def salvar_pasta_local(self, nome: str, pasta: str) -> dict:
+        """Troca a pasta e zera a seleção: os testes de lá são outros."""
+        for item in self._itens:
+            if item["nome"] == nome:
+                atual = _locais(item.get("testes_locais"))
+                if atual["pasta"] != (pasta or "").strip():
+                    atual = {"pasta": (pasta or "").strip(), "selecao": []}
+                item["testes_locais"] = atual
+                self._salvar()
+                return {"ok": True, **atual}
+        return {"ok": False, "erro": "Ambiente não está importado."}
+
+    def salvar_selecao_local(self, nome: str, rotinas: list[str]) -> dict:
+        for item in self._itens:
+            if item["nome"] == nome:
+                atual = _locais(item.get("testes_locais"))
+                atual["selecao"] = list(dict.fromkeys(rotinas or []))
+                item["testes_locais"] = atual
+                self._salvar()
+                return {"ok": True, "selecao": atual["selecao"]}
         return {"ok": False, "erro": "Ambiente não está importado."}
 
     def idioma_manual(self, nome: str) -> bool:

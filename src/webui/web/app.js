@@ -29,6 +29,10 @@ const state = {
   preferencias: {},        // globais: modo, limite, raiz dos testes
   buscaTestes: '',
   selecaoTestes: new Set(),
+  origemTestes: 'fontes',            // 'fontes' (catálogo) ou 'local' (pasta)
+  pastaLocal: '',
+  selecaoLocal: new Set(),           // seleção da pasta local, separada
+  configLocal: null,                 // situação do config.json da pasta
   abaAtiva: '#aba-config',           // aba do painel "Ambiente selecionado"
   execucao: { ativa: false, rotinas: [] },
   paralelosDesmarcados: new Set(),   // padrão é tudo marcado
@@ -118,6 +122,7 @@ async function selecionar(nome) {
   // Seleção de testes é por ambiente: trocar de ambiente não pode carregar as
   // rotinas marcadas do anterior. `renderTestes` repõe a partir do disco.
   state.selecaoTestes = new Set();
+  state.selecaoLocal = new Set();
   state.buscaTestes = '';
   $('#busca-testes').value = '';
   abrirCombo(false);
@@ -151,6 +156,8 @@ async function renderDetalhes() {
   vazio.hidden = true;
   corpo.hidden = false;
 
+  // A origem decide o que `renderTestes` e `renderArvore` mostram.
+  await carregarOrigemTestes();
   await Promise.all([renderPortas(), renderTestes(), renderArvore(),
                      renderParalelos(), renderInventario()]);
 }
@@ -159,7 +166,7 @@ async function renderDetalhes() {
 
 function renderModo() {
   const modo = state.preferencias.modo || 'sequencial';
-  for (const botao of $$('.seg')) {
+  for (const botao of $$('.seg[data-modo]')) {
     botao.setAttribute('aria-checked', String(botao.dataset.modo === modo));
   }
   $('#max-instancias').value = state.preferencias.max_instancias ?? 3;
@@ -468,46 +475,129 @@ async function medirInventario() {
 
 /* ── Catálogo de testes ────────────────────────────────── */
 
+/** Seleção em uso: a dos fontes ou a da pasta local. São conjuntos
+    separados — trocar de origem não pode apagar o que foi marcado na outra. */
+function selecaoAtiva() {
+  return state.origemTestes === 'local' ? state.selecaoLocal : state.selecaoTestes;
+}
+
+async function carregarOrigemTestes() {
+  const r = await api.get_origem_testes(state.selecionado);
+  state.origemTestes = r.ok ? r.origem : 'fontes';
+  state.pastaLocal = r.ok ? (r.pasta || '') : '';
+  renderOrigemTestes();
+}
+
+function renderOrigemTestes() {
+  const local = state.origemTestes === 'local';
+  for (const botao of $$('.seg[data-origem]')) {
+    botao.setAttribute('aria-checked', String(botao.dataset.origem === state.origemTestes));
+  }
+  $('#pasta-local').hidden = !local;
+  $('#pasta-local-campo').value = state.pastaLocal || '';
+  if (!local) {
+    $('#config-local-status').hidden = true;
+    state.configLocal = null;
+  }
+}
+
+async function trocarOrigemTestes(origem) {
+  if (origem === state.origemTestes) return;
+  const r = await api.salvar_origem_testes(state.selecionado, origem);
+  if (!r.ok) return;
+  state.origemTestes = r.origem;
+  state.buscaTestes = '';
+  $('#busca-testes').value = '';
+  abrirCombo(false);
+  renderOrigemTestes();
+  await Promise.all([renderTestes(), renderArvore()]);
+  atualizarBotoes();
+}
+
+/** Situação do config.json da pasta, logo abaixo do caminho. */
+function renderConfigLocalStatus(config) {
+  const p = $('#config-local-status');
+  state.configLocal = config || null;
+  if (state.origemTestes !== 'local' || !config) { p.hidden = true; return; }
+  p.hidden = false;
+  if (!config.existe) {
+    p.dataset.estado = 'erro';
+    p.textContent = 'config.json não encontrado na pasta — a execução precisa dele.';
+    return;
+  }
+  if (config.erro) {
+    p.dataset.estado = 'erro';
+    p.textContent = config.erro;
+    return;
+  }
+  const divs = config.divergencias || [];
+  if (!divs.length) {
+    p.dataset.estado = 'ok';
+    p.textContent = 'config.json conferido: idioma, login POUI, log de depuração e navegador como esperado.';
+    return;
+  }
+  const erros = divs.filter(d => d.nivel === 'erro').length;
+  p.dataset.estado = erros ? 'erro' : 'aviso';
+  p.textContent = `config.json com ${divs.length} campo${divs.length > 1 ? 's' : ''} `
+    + `fora do esperado (${divs.map(d => d.rotulo).join(', ')}). `
+    + 'Ao confirmar, você decide se ajusta.';
+}
+
 async function renderTestes() {
-  const r = await api.listar_testes(state.selecionado, state.buscaTestes || '');
+  const local = state.origemTestes === 'local';
+  const r = local
+    ? await api.listar_testes_locais(state.selecionado, state.buscaTestes || '')
+    : await api.listar_testes(state.selecionado, state.buscaTestes || '');
   const lista = $('#lista-testes');
   const vazio = $('#testes-vazio');
+  const selecao = selecaoAtiva();
   lista.innerHTML = '';
 
   if (!r.ok) {
     vazio.hidden = false;
     vazio.textContent = r.erro;
-    $('#testes-origem').textContent = '—';
+    $('#testes-origem').textContent = local && !state.pastaLocal
+      ? 'Escolha a pasta com os testes.' : '—';
+    renderConfigLocalStatus(null);
     atualizarResumoCombo();
     return;
   }
 
-  $('#testes-origem').textContent =
-    `${r.pais} · ${r.total} rotinas em ${r.raiz}`;
+  if (local) {
+    $('#testes-origem').textContent =
+      `${r.total} teste${r.total === 1 ? '' : 's'} em ${r.pasta}`;
+    renderConfigLocalStatus(r.config);
+  } else {
+    $('#testes-origem').textContent =
+      `${r.pais} · ${r.total} rotinas em ${r.raiz}`;
+  }
 
   if (!r.rotinas.length) {
     vazio.hidden = false;
     vazio.textContent = state.buscaTestes
       ? 'Nenhuma rotina com esse trecho no nome.'
-      : 'Nenhuma rotina para este país.';
+      : (local ? 'Nenhum par TESTSUITE/TESTCASE nesta pasta.'
+               : 'Nenhuma rotina para este país.');
     atualizarResumoCombo();
     return;
   }
 
   vazio.hidden = true;
   for (const rotina of r.rotinas) {
-    if (rotina.selecionada) state.selecaoTestes.add(rotina.rotina);
+    if (rotina.selecionada) selecao.add(rotina.rotina);
     const li = document.createElement('li');
     li.className = 'combo-item';
     li.setAttribute('role', 'option');
     li.dataset.semCase = String(!rotina.tem_case);
-    li.setAttribute('aria-selected', String(state.selecaoTestes.has(rotina.rotina)));
+    li.setAttribute('aria-selected', String(selecao.has(rotina.rotina)));
     li.innerHTML = `<input type="checkbox" tabindex="-1" aria-hidden="true">
       <span class="rotina"></span><span class="modulo"></span>`;
     $('.rotina', li).textContent = rotina.rotina;
-    $('.modulo', li).textContent =
-      `${rotina.modulo} · ${rotina.casos.length} casos`;
-    $('input', li).checked = state.selecaoTestes.has(rotina.rotina);
+    // Local: a subpasta faz o papel do módulo; na raiz da pasta só a contagem.
+    $('.modulo', li).textContent = rotina.modulo
+      ? `${rotina.modulo} · ${rotina.casos.length} casos`
+      : `${rotina.casos.length} casos`;
+    $('input', li).checked = selecao.has(rotina.rotina);
     if (!rotina.tem_case) {
       li.title = 'Sem o arquivo TESTCASE — o suite quebra no import.';
     }
@@ -523,19 +613,98 @@ async function renderTestes() {
 }
 
 function alternarRotina(nome, li) {
-  if (state.selecaoTestes.has(nome)) state.selecaoTestes.delete(nome);
-  else state.selecaoTestes.add(nome);
-  const marcado = state.selecaoTestes.has(nome);
+  const selecao = selecaoAtiva();
+  if (selecao.has(nome)) selecao.delete(nome);
+  else selecao.add(nome);
+  const marcado = selecao.has(nome);
   $('input', li).checked = marcado;
   li.setAttribute('aria-selected', String(marcado));
   atualizarResumoCombo();
 }
 
 function atualizarResumoCombo() {
-  const total = state.selecaoTestes.size;
+  const total = selecaoAtiva().size;
+  const local = state.origemTestes === 'local';
+  const nome = local ? 'teste' : 'rotina';
+  const marcado = local ? 'marcado' : 'marcada';
   $('#combo-resumo').textContent = total
-    ? `${total} rotina${total > 1 ? 's' : ''} marcada${total > 1 ? 's' : ''}`
-    : 'Selecionar rotinas…';
+    ? `${total} ${nome}${total > 1 ? 's' : ''} ${marcado}${total > 1 ? 's' : ''}`
+    : `Selecionar ${nome}s…`;
+}
+
+/* ── Pasta local ────────────────────────────────────────── */
+
+async function escolherPastaLocal() {
+  const r = await api.escolher_pasta_local(state.selecionado);
+  if (!r.ok && r.cancelado) return;
+  await aplicarPastaLocal(r);
+}
+
+async function aplicarPastaLocalDigitada(caminho) {
+  caminho = (caminho || '').trim();
+  if (caminho === state.pastaLocal) return;
+  const r = await api.salvar_pasta_local(state.selecionado, caminho);
+  await aplicarPastaLocal(r);
+}
+
+async function aplicarPastaLocal(r) {
+  // Trocar a pasta zera a seleção no Python; aqui também, senão a lista nova
+  // nasce com marcas da pasta antiga.
+  state.selecaoLocal = new Set();
+  state.pastaLocal = r.pasta || $('#pasta-local-campo').value.trim();
+  $('#pasta-local-campo').value = state.pastaLocal;
+  await Promise.all([renderTestes(), renderArvore()]);
+  atualizarBotoes();
+}
+
+/* ── config.json local: pergunta antes de ajustar ───────── */
+
+function abrirModalConfigLocal(conferido) {
+  const total = conferido.divergencias.length;
+  $('#config-local-intro').textContent =
+    `${conferido.caminho} — ${total} campo${total > 1 ? 's' : ''} fora do esperado `
+    + `para este ambiente${conferido.idioma ? ` (idioma ${conferido.idioma})` : ''}.`;
+  const linhas = $('#div-linhas');
+  linhas.innerHTML = '';
+  for (const d of conferido.divergencias) {
+    const linha = document.createElement('div');
+    linha.className = 'div-linha';
+    linha.setAttribute('role', 'row');
+    linha.dataset.nivel = d.nivel;
+    for (const [classe, texto] of [
+      ['campo-nome', d.rotulo], ['encontrado', d.encontrado],
+      ['esperado', d.esperado], ['motivo', d.motivo],
+    ]) {
+      const celula = document.createElement('span');
+      celula.className = classe;
+      celula.setAttribute('role', 'cell');
+      celula.textContent = texto;
+      if (classe === 'campo-nome') {
+        const chave = document.createElement('code');
+        chave.className = 'campo-chave mono';
+        chave.textContent = d.chave;
+        celula.appendChild(chave);
+      }
+      linha.appendChild(celula);
+    }
+    linhas.appendChild(linha);
+  }
+  $('#config-local-erro').hidden = true;
+  abrirModal('overlay-config-local');
+}
+
+async function ajustarConfigLocal() {
+  const r = await api.corrigir_config_local(state.selecionado);
+  if (!r.ok) {
+    const erro = $('#config-local-erro');
+    erro.hidden = false;
+    erro.textContent = r.erro || 'Não foi possível gravar o config.json.';
+    return;
+  }
+  fecharModal('overlay-config-local');
+  escreverLinha({ level: 'INFO',
+                  text: `[LOCAL] config.json ajustado: ${(r.alteradas || []).join(', ') || 'nada a mudar'}.` });
+  await renderTestes();
 }
 
 function abrirCombo(abrir) {
@@ -748,10 +917,24 @@ async function limparResultados() {
 }
 
 async function confirmarTestes() {
-  const r = await api.salvar_selecao(state.selecionado, [...state.selecaoTestes]);
+  const local = state.origemTestes === 'local';
+  const r = local
+    ? await api.salvar_selecao_local(state.selecionado, [...state.selecaoLocal])
+    : await api.salvar_selecao(state.selecionado, [...state.selecaoTestes]);
   if (!r.ok) return;
   abrirCombo(false);
   await renderArvore();
+  atualizarBotoes();
+  if (!local || !state.selecaoLocal.size) return;
+
+  // O config.json da pasta manda na corrida. Conferido aqui, na confirmação:
+  // se diverge, a pessoa vê o que foi encontrado e decide se ajusta.
+  const conferido = await api.validar_config_local(state.selecionado);
+  if (!conferido.ok) {
+    renderConfigLocalStatus({ existe: true, erro: conferido.erro, divergencias: [] });
+    return;
+  }
+  if (conferido.divergencias.length) abrirModalConfigLocal(conferido);
 }
 
 /* ── Status e log (polling) ────────────────────────────── */
@@ -1762,7 +1945,7 @@ function ligarEventos() {
   });
 
   // ── Modo e limite ──
-  for (const botao of $$('.seg')) {
+  for (const botao of $$('.seg[data-modo]')) {
     botao.addEventListener('click', async () => {
       const r = await api.salvar_preferencias({ modo: botao.dataset.modo });
       if (r.ok) {
@@ -1803,6 +1986,19 @@ function ligarEventos() {
   });
 
   $('#btn-confirmar-testes').addEventListener('click', confirmarTestes);
+
+  // ── Origem dos testes e pasta local ──
+  for (const botao of $$('.seg[data-origem]')) {
+    botao.addEventListener('click', () => trocarOrigemTestes(botao.dataset.origem));
+  }
+  $('#btn-pasta-local').addEventListener('click', escolherPastaLocal);
+  $('#pasta-local-campo').addEventListener('change', ev => aplicarPastaLocalDigitada(ev.target.value));
+  $('#pasta-local-campo').addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); aplicarPastaLocalDigitada(ev.target.value); }
+  });
+  $('#btn-config-local-sim').addEventListener('click', ajustarConfigLocal);
+  $('#btn-config-local-nao').addEventListener('click', () => fecharModal('overlay-config-local'));
+  $('#btn-fechar-config-local').addEventListener('click', () => fecharModal('overlay-config-local'));
 
   // ── Ambientes paralelos ──
   $('#chk-todos-paralelos').addEventListener('change', ev => {

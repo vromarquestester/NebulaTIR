@@ -17,6 +17,7 @@ porta 7890.
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import subprocess
 import time
@@ -89,6 +90,85 @@ def porta_responde(porta: int, host: str = "127.0.0.1",
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         return s.connect_ex((host, int(porta))) == 0
+
+
+# ─────────────────────────────────────────────────────────────
+# QUEM ESTÁ NA PORTA
+# ─────────────────────────────────────────────────────────────
+# A porta responder diz que ALGUÉM atende — não diz quem. Dois ambientes
+# cadastrados na mesma porta (PAR_2510 e PAR_2610, os dois na 4321) apareciam
+# ambos "no ar" com um só de pé, e o executar reaproveitava o errado. O dono é
+# o processo que escuta a porta; o executável dele diz de qual ambiente é.
+
+def pid_escutando(porta: int) -> int:
+    """PID do processo que escuta `porta` em TCP, ou 0 se não achou.
+
+    Lê o `netstat -ano`: existe em toda instalação do Windows, sem dependência
+    nova. Fora do Windows devolve 0 — quem chama trata "não sei" como "não dá
+    para desempatar" e mantém o comportamento antigo.
+    """
+    if not porta or os.name != "nt":
+        return 0
+    try:
+        saida = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=5,
+            creationflags=_SEM_JANELA).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    return pid_no_netstat(saida, int(porta))
+
+
+def pid_no_netstat(saida: str, porta: int) -> int:
+    """Interpreta a saída do `netstat -ano`: linha LISTENING da porta → PID."""
+    sufixo = f":{int(porta)}"
+    for linha in (saida or "").splitlines():
+        partes = linha.split()
+        if len(partes) < 5 or partes[0].upper() != "TCP":
+            continue
+        local, estado, pid = partes[1], partes[3], partes[4]
+        if estado.upper() != "LISTENING" or not local.endswith(sufixo):
+            continue
+        try:
+            return int(pid)
+        except ValueError:
+            continue
+    return 0
+
+
+def exe_do_pid(pid: int) -> str:
+    """Caminho do executável do processo, ou vazio se não deu para ler."""
+    if not pid or os.name != "nt":
+        return ""
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not handle:
+        return ""
+    try:
+        tamanho = wintypes.DWORD(32768)
+        buffer = ctypes.create_unicode_buffer(tamanho.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer,
+                                                   ctypes.byref(tamanho)):
+            return ""
+        return buffer.value
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def dono_da_porta(porta: int) -> dict:
+    """`{"pid": N, "exe": caminho}` de quem escuta a porta. Vazios se não soube."""
+    pid = pid_escutando(porta)
+    return {"pid": pid, "exe": exe_do_pid(pid) if pid else ""}
+
+
+def mesmo_executavel(a: str, b: str) -> bool:
+    """Compara caminhos de exe sem olhar caixa nem barra."""
+    if not a or not b:
+        return False
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 
 
 def esperar_porta(porta: int, limite_seg: float | None = None,

@@ -430,3 +430,62 @@ def test_dbaccess_que_nao_sobe_impede_o_appserver(tmp_path, monkeypatch):
                                          "dbaccess_exe": "y"}})
     assert r["subidos"] == []
     assert "porta ocupada" in r["erros"][0]["erro"]
+
+
+# ── Quem está na porta ─────────────────────────────────────
+# Dois ambientes cadastrados na mesma porta: "responde" não diz qual está de
+# pé. O dono é o processo LISTENING do netstat.
+
+NETSTAT = """
+Conexões ativas
+
+  Proto  Endereço local         Endereço externo       Estado           PID
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1234
+  TCP    0.0.0.0:4321           0.0.0.0:0              LISTENING       5566
+  TCP    127.0.0.1:4321         127.0.0.1:50000        ESTABLISHED     5566
+  TCP    127.0.0.1:14321        0.0.0.0:0              LISTENING       9999
+  TCP    [::]:4322              [::]:0                 LISTENING       7788
+"""
+
+
+def test_pid_no_netstat_acha_a_linha_listening():
+    assert appservers.pid_no_netstat(NETSTAT, 4321) == 5566
+
+
+def test_pid_no_netstat_nao_confunde_sufixo():
+    """`:4321` não pode casar com `:14321`."""
+    assert appservers.pid_no_netstat(NETSTAT, 321) == 0
+
+
+def test_pid_no_netstat_ipv6():
+    assert appservers.pid_no_netstat(NETSTAT, 4322) == 7788
+
+
+def test_pid_no_netstat_porta_sem_ninguem():
+    assert appservers.pid_no_netstat(NETSTAT, 8080) == 0
+    assert appservers.pid_no_netstat("", 4321) == 0
+
+
+def test_mesmo_executavel_ignora_caixa_e_barra():
+    assert appservers.mesmo_executavel(r"C:\TOTVS\PAR\appserver.exe",
+                                       "c:/totvs/par/APPSERVER.EXE")
+    assert not appservers.mesmo_executavel(r"C:\A\appserver.exe",
+                                           r"C:\B\appserver.exe")
+    assert not appservers.mesmo_executavel("", r"C:\B\appserver.exe")
+
+
+def test_dono_da_porta_junta_pid_e_exe(monkeypatch):
+    monkeypatch.setattr(appservers, "pid_escutando", lambda porta: 5566)
+    monkeypatch.setattr(appservers, "exe_do_pid",
+                        lambda pid: r"C:\T\appserver.exe" if pid == 5566 else "")
+    assert appservers.dono_da_porta(4321) == {"pid": 5566,
+                                              "exe": r"C:\T\appserver.exe"}
+    monkeypatch.setattr(appservers, "pid_escutando", lambda porta: 0)
+    assert appservers.dono_da_porta(4321) == {"pid": 0, "exe": ""}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="netstat/ctypes do Windows")
+def test_exe_do_pid_do_proprio_processo():
+    import os
+    exe = appservers.exe_do_pid(os.getpid())
+    assert exe.lower().endswith(("python.exe", "pythonw.exe", "python3.exe"))

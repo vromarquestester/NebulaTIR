@@ -35,6 +35,7 @@ from services import (
     paralelos,
     portas,
     preparacao,
+    testes_locais,
 )
 from services import atualizacao as _atualizacao
 from services import instancias as instancias_mod
@@ -42,7 +43,7 @@ from services.canal import NOME_EXE, URL_MANIFESTO
 from services.familia import irmas as _irmas
 from services.instancias import Instancias
 from services.gerenciador_client import EstadoGerenciador
-from services.importados import RepositorioImportados
+from services.importados import ORIGEM_LOCAL, RepositorioImportados
 from services.preferencias import BASE_DIR, MODOS, Preferencias
 from webui import log_bridge
 
@@ -245,6 +246,12 @@ class Api:
         """
         g = self._estado.instantaneo
         ambientes = {}
+        # Quantos importados dividem cada porta: com dois na mesma (PAR_2510 e
+        # PAR_2610 na 4321), "a porta responde" não diz qual deles está de pé.
+        portas = [str((self._estado.banco_por_nome(n) or {}).get("port", ""))
+                  for n in self._importados.nomes]
+        repetidas = {p for p in portas if p and portas.count(p) > 1}
+        donos: dict = {}
         for nome in self._importados.nomes:
             info = dict(g["ambientes"].get(nome) or {})
             banco = self._estado.banco_por_nome(nome) or {}
@@ -263,6 +270,12 @@ class Api:
             # A porta responder é observável e não tem dono: vale para quem
             # quer que tenha subido, e sobrevive ao reinício dos dois lados.
             info["porta_responde"] = self._porta_no_ar(info["port"])
+            # Porta dividida com outro importado: só conta como "este no ar"
+            # se o processo que escuta for o AppServer deste ambiente.
+            info["porta_compartilhada"] = str(info["port"]) in repetidas
+            if info["porta_responde"] and info["porta_compartilhada"]:
+                info["porta_responde"] = self._porta_e_deste(
+                    info["port"], banco, donos)
             # `fonte_estado` vai sempre: quem lê precisa saber se o "no ar" veio
             # do Gerenciador (há handle, dá para parar por lá) ou da porta (o
             # processo é de outro dono).
@@ -308,6 +321,39 @@ class Api:
         if not numero:
             return False
         return appservers.porta_responde(numero, timeout=0.2)
+
+    def _porta_e_deste(self, porta, banco: dict, cache: dict | None = None) -> bool:
+        """Quem escuta a porta é o AppServer DESTE ambiente?
+
+        Só é chamado quando a porta responde e mais de um importado a divide —
+        é a única situação em que "responde" não basta. Sem conseguir ler o
+        dono (netstat falhou, processo protegido), devolve True: em dúvida,
+        vale o comportamento antigo, que era confiar na porta.
+
+        `cache` é por rodada de status: com três ambientes na mesma porta o
+        `netstat` roda uma vez, não três.
+        """
+        chave = str(porta)
+        if cache is not None and chave in cache:
+            dono = cache[chave]
+        else:
+            dono = appservers.dono_da_porta(int(chave))
+            if cache is not None:
+                cache[chave] = dono
+        if not dono.get("exe"):
+            return True
+        return appservers.mesmo_executavel(dono["exe"],
+                                           banco.get("appserver_exe", ""))
+
+    def _porta_compartilhada(self, nome: str) -> bool:
+        """Outro ambiente importado está cadastrado na mesma porta que `nome`?"""
+        porta = str((self._estado.banco_por_nome(nome) or {}).get("port", ""))
+        if not porta:
+            return False
+        return any(
+            outro != nome and
+            str((self._estado.banco_por_nome(outro) or {}).get("port", "")) == porta
+            for outro in self._importados.nomes)
 
     def poll_logs(self, limite: int = 200) -> list:
         """Drena a fila de logs (não bloqueia)."""
@@ -453,6 +499,132 @@ class Api:
             return gravado
         return self.get_selecao(nome)
 
+    # ── Testes locais: pasta escolhida pelo usuário ──
+    #
+    # Segunda origem da aba "Casos de teste". O catálogo por país serve os
+    # fontes oficiais; aqui entra o teste da equipe, o de QA ou um script
+    # avulso — qualquer pasta com o par TESTSUITE/TESTCASE e um `config.json`.
+    # Origem, pasta e seleção são por ambiente, como a seleção dos fontes.
+
+    def get_origem_testes(self, nome: str) -> dict:
+        if not self._importados.contem(nome):
+            return {"ok": False, "erro": "Ambiente não está importado."}
+        locais = self._importados.testes_locais(nome)
+        return {"ok": True, "origem": self._importados.origem_testes(nome),
+                "pasta": locais["pasta"]}
+
+    def salvar_origem_testes(self, nome: str, origem: str) -> dict:
+        if not self._importados.contem(nome):
+            return {"ok": False, "erro": "Ambiente não está importado."}
+        gravado = self._importados.salvar_origem_testes(nome, origem)
+        if not gravado.get("ok"):
+            return gravado
+        return {**gravado, **self.get_selecao(nome)}
+
+    def escolher_pasta_local(self, nome: str) -> dict:
+        """Diálogo de pasta + varredura. Cancelar não mexe em nada."""
+        if not self._importados.contem(nome):
+            return {"ok": False, "erro": "Ambiente não está importado."}
+        atual = self._importados.testes_locais(nome)["pasta"]
+        escolha = self.escolher_pasta(atual)
+        if not escolha.get("ok"):
+            return escolha
+        gravado = self._importados.salvar_pasta_local(nome, escolha["caminho"])
+        if not gravado.get("ok"):
+            return gravado
+        return self.listar_testes_locais(nome)
+
+    def salvar_pasta_local(self, nome: str, pasta: str) -> dict:
+        """Caminho digitado ou colado, sem diálogo."""
+        if not self._importados.contem(nome):
+            return {"ok": False, "erro": "Ambiente não está importado."}
+        gravado = self._importados.salvar_pasta_local(nome, pasta)
+        if not gravado.get("ok"):
+            return gravado
+        return self.listar_testes_locais(nome)
+
+    def _idioma_esperado(self, nome: str) -> str:
+        """Idioma que o `config.json` local deve ter: o do país do ambiente.
+
+        País sem tradução conhecida cai no idioma configurado para o ambiente
+        na aba Configurações — que é o que a corrida pelos fontes usaria.
+        """
+        pais = self._estado.pais_do_ambiente(nome) if self._estado.online else ""
+        idioma = config_tir.idioma_do_pais(pais) if pais else ""
+        if not idioma:
+            idioma = (self._importados.configuracao(nome) or {}).get("Language", "")
+        return idioma or ""
+
+    def _escanear_local(self, nome: str) -> dict:
+        locais = self._importados.testes_locais(nome)
+        if not locais["pasta"]:
+            return {"ok": False, "erro": "Escolha a pasta dos testes.",
+                    "pasta": "", "testes": [], "config": None}
+        return testes_locais.escanear(locais["pasta"])
+
+    def listar_testes_locais(self, nome: str, busca: str = "") -> dict:
+        """Testes da pasta local, já com a seleção marcada e o config conferido."""
+        if not self._importados.contem(nome):
+            return {"ok": False, "erro": "Ambiente não está importado."}
+        varredura = self._escanear_local(nome)
+        if not varredura.get("ok"):
+            return {**varredura, "rotinas": [], "total": 0}
+
+        idioma = self._idioma_esperado(nome)
+        config = dict(varredura["config"])
+        conteudo = config.pop("conteudo", None)
+        config["divergencias"] = (
+            testes_locais.validar(conteudo, idioma)
+            if config["existe"] and not config["erro"] else [])
+
+        rotinas = catalogo_testes.filtrar(varredura["testes"], busca)
+        selecionadas = set(self._importados.testes_locais(nome)["selecao"])
+        for rotina in rotinas:
+            rotina["selecionada"] = rotina["rotina"] in selecionadas
+        return {"ok": True, "pasta": varredura["pasta"], "rotinas": rotinas,
+                "total": len(varredura["testes"]), "config": config,
+                "idioma": idioma}
+
+    def salvar_selecao_local(self, nome: str, rotinas: list) -> dict:
+        """Grava os testes locais escolhidos e devolve a árvore."""
+        if not self._importados.contem(nome):
+            return {"ok": False, "erro": "Ambiente não está importado."}
+        gravado = self._importados.salvar_selecao_local(nome, list(rotinas or []))
+        if not gravado.get("ok"):
+            return gravado
+        return self.get_selecao(nome)
+
+    def validar_config_local(self, nome: str) -> dict:
+        """O que diverge no `config.json` da pasta. É o que a tela pergunta
+        ao confirmar: "ajustar para o esperado?"."""
+        if not self._importados.contem(nome):
+            return {"ok": False, "erro": "Ambiente não está importado."}
+        varredura = self._escanear_local(nome)
+        if not varredura.get("ok"):
+            return varredura
+        config = varredura["config"]
+        if not config["existe"]:
+            return {"ok": False, "erro": f"A pasta não tem {testes_locais.ARQUIVO_CONFIG}.",
+                    "caminho": config["caminho"]}
+        if config["erro"]:
+            return {"ok": False, "erro": config["erro"], "caminho": config["caminho"]}
+        idioma = self._idioma_esperado(nome)
+        return {"ok": True, "caminho": config["caminho"], "idioma": idioma,
+                "divergencias": testes_locais.validar(config["conteudo"], idioma)}
+
+    def corrigir_config_local(self, nome: str) -> dict:
+        """Grava os valores esperados no `config.json` da pasta. Só a pedido."""
+        conferido = self.validar_config_local(nome)
+        if not conferido.get("ok"):
+            return conferido
+        return testes_locais.corrigir(conferido["caminho"], conferido["idioma"])
+
+    def _selecao_ativa(self, nome: str) -> list[str]:
+        """Rotinas confirmadas na origem que está em uso."""
+        if self._importados.origem_testes(nome) == ORIGEM_LOCAL:
+            return self._importados.testes_locais(nome)["selecao"]
+        return self._importados.selecao(nome)
+
     def get_selecao(self, nome: str) -> dict:
         """Árvore da seleção: cada rotina com os casos que o suite executa.
 
@@ -462,14 +634,19 @@ class Api:
         if not self._importados.contem(nome):
             return {"ok": False, "erro": "Ambiente não está importado."}
 
-        escolhidas = self._importados.selecao(nome)
+        origem = self._importados.origem_testes(nome)
+        escolhidas = self._selecao_ativa(nome)
         if not escolhidas:
-            return {"ok": True, "arvore": [], "total_casos": 0}
+            return {"ok": True, "arvore": [], "total_casos": 0, "origem": origem}
 
-        pais = self._estado.pais_do_ambiente(nome) if self._estado.online else ""
-        catalogo = catalogo_testes.escanear_pais(self._prefs.raiz_testes, pais) \
-            if pais else {"ok": False, "rotinas": []}
-        por_nome = {r["rotina"]: r for r in catalogo.get("rotinas", [])}
+        if origem == ORIGEM_LOCAL:
+            varredura = self._escanear_local(nome)
+            por_nome = {t["rotina"]: t for t in varredura.get("testes", [])}
+        else:
+            pais = self._estado.pais_do_ambiente(nome) if self._estado.online else ""
+            catalogo = catalogo_testes.escanear_pais(self._prefs.raiz_testes, pais) \
+                if pais else {"ok": False, "rotinas": []}
+            por_nome = {r["rotina"]: r for r in catalogo.get("rotinas", [])}
 
         arvore, total = [], 0
         for rotina in escolhidas:
@@ -482,7 +659,8 @@ class Api:
                 continue
             total += len(achada["casos"])
             arvore.append({**achada, "ausente": False})
-        return {"ok": True, "arvore": arvore, "total_casos": total}
+        return {"ok": True, "arvore": arvore, "total_casos": total,
+                "origem": origem}
 
     # ─────────────────────────────────────────────────────────
     # EXECUÇÃO DO TIR
@@ -508,7 +686,7 @@ class Api:
                                            f"({g['operacao'] or 'operação em curso'})."}
         if not self._importados.contem(nome):
             return {"ok": False, "motivo": "Selecione um ambiente importado."}
-        if not self._importados.selecao(nome):
+        if not self._selecao_ativa(nome):
             return {"ok": False, "motivo": "Confirme ao menos uma rotina de teste."}
         if self._execucao is not None and self._execucao.ativa:
             return {"ok": False, "motivo": "Já existe uma execução em andamento."}
@@ -524,8 +702,9 @@ class Api:
             return {"ok": False, "erro": liberado["motivo"]}
 
         self._ambiente_principal = nome
-        selecao = self._importados.selecao(nome)
-        catalogo = self.listar_testes(nome)
+        local = self._importados.origem_testes(nome) == ORIGEM_LOCAL
+        selecao = self._selecao_ativa(nome)
+        catalogo = self.listar_testes_locais(nome) if local             else self.listar_testes(nome)
         if not catalogo.get("ok"):
             return catalogo
         por_nome = {r["rotina"]: r for r in catalogo["rotinas"]}
@@ -534,10 +713,29 @@ class Api:
             return {"ok": False,
                     "erro": "As rotinas confirmadas não estão mais no disco."}
 
+        # Testes locais: o `config.json` da pasta manda, como está. Ele tem
+        # uma URL só, então a corrida é sequencial — em paralelo cada
+        # instância precisaria da própria URL, e isso seria reescrever o
+        # arquivo do usuário.
+        config_local = None
+        if local:
+            conferido = self.validar_config_local(nome)
+            if not conferido.get("ok"):
+                return conferido
+            config_local, erro_config = testes_locais.ler_config(conferido["caminho"])
+            if config_local is None:
+                return {"ok": False, "erro": erro_config}
+            url = str(testes_locais._valor(config_local, "Url") or "")
+            if not url.startswith(("http://", "https://")):
+                return {"ok": False,
+                        "erro": f"O {testes_locais.ARQUIVO_CONFIG} da pasta "
+                                f"precisa de uma Url começando com http:// "
+                                f"ou https://."}
+
         # Divisão por caso: cada unidade vira um item da fila. Casos que
         # dependem uns dos outros ficam na mesma unidade, e portanto na mesma
-        # instância e na ordem do suite.
-        dividir = self._prefs.dividir_casos
+        # instância e na ordem do suite. Local roda inteiro, numa instância.
+        dividir = self._prefs.dividir_casos and not local
         for rotina in rotinas:
             grupos, analise = analise_casos.unidades(rotina, dividir)
             rotina["unidades"] = grupos
@@ -549,10 +747,13 @@ class Api:
         if not ambiente_python.get("ok"):
             return ambiente_python
 
-        config = self._config_do_ambiente(nome)
-        erro = config_tir.validar(config)
-        if erro:
-            return {"ok": False, "erro": erro}
+        if local:
+            config = config_local
+        else:
+            config = self._config_do_ambiente(nome)
+            erro = config_tir.validar(config)
+            if erro:
+                return {"ok": False, "erro": erro}
 
         # ── Ambiente que já atende é reaproveitado, não derrubado ──
         #
@@ -565,7 +766,17 @@ class Api:
         # dono: usamos como está e não o encerramos no fim.
         banco_principal = self._estado.banco_por_nome(nome) or {}
         porta_principal = banco_principal.get("port", "")
-        self._principal_e_nosso = not self._porta_no_ar(porta_principal)
+        atende = self._porta_no_ar(porta_principal)
+        if atende and self._porta_compartilhada(nome):
+            # Porta dividida com outro importado: quem atende pode ser o
+            # vizinho. Reaproveitar aí mandaria o teste para o ambiente errado.
+            atende = self._porta_e_deste(porta_principal, banco_principal)
+            if not atende:
+                return {"ok": False,
+                        "erro": f"A porta {porta_principal} está ocupada pelo "
+                                f"AppServer de outro ambiente. Pare-o antes de "
+                                f"executar em {nome}."}
+        self._principal_e_nosso = not atende
 
         if self._principal_e_nosso:
             # O Gerenciador segura um ambiente com AppServer e DbAccess
@@ -587,14 +798,19 @@ class Api:
 
         ambientes_por_slot = [nome]
         config_por_ambiente = {}
-        if not self._prefs.paralelo:
+        paralelo = self._prefs.paralelo and not local
+        if local and self._prefs.paralelo:
+            self._fila.put({"kind": "log", "level": "INFO",
+                            "text": "Testes locais rodam em sequencial: o "
+                                    "config.json da pasta tem uma URL só."})
+        if not paralelo:
             # Sequencial também roda sob o AppServer do NebulaTIR: acabamos de
             # parar o do Gerenciador, então sem subir de volta não há ninguém
             # atendendo a URL do teste.
             pronto_principal = self._subir_principal(nome)
             if not pronto_principal.get("ok"):
                 return pronto_principal
-        if self._prefs.paralelo:
+        if paralelo:
             preparo = self._preparar_paralelos(nome)
             if not preparo.get("ok"):
                 return preparo
@@ -617,7 +833,8 @@ class Api:
             ambientes_por_slot=ambientes_por_slot,
             config_por_ambiente=config_por_ambiente,
             restaurar_banco=restaurar_entre_rotinas,
-            religar_ambiente=self._religar_ambiente)
+            religar_ambiente=self._religar_ambiente,
+            config_literal=local)
         self._execucao.iniciar()
         log.info("[TIR] Execução iniciada em %s: %d rotinas em %d instância(s).",
                  nome, len(rotinas), len(ambientes_por_slot))

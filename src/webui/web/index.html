@@ -341,7 +341,36 @@
                 <span class="sr-only">Limpar resultados</span>
               </button>
             </div>
+            <!-- Origem dos testes. Pelos fontes: catálogo por país. Locais:
+                 pasta escolhida — teste da equipe, de QA ou um script avulso —
+                 com o par TESTCASE/TESTSUITE e um config.json que manda na
+                 corrida (é conferido, não sobrescrito). -->
+            <div class="segmentado segmentado-origem" role="radiogroup"
+                 aria-label="Origem dos testes">
+              <button type="button" class="seg" id="origem-fontes" role="radio"
+                      aria-checked="true" data-origem="fontes">
+                Pelos fontes
+              </button>
+              <button type="button" class="seg" id="origem-local" role="radio"
+                      aria-checked="false" data-origem="local">
+                Testes locais
+              </button>
+            </div>
+
+            <div class="pasta-local" id="pasta-local" hidden>
+              <label class="sr-only" for="pasta-local-campo">Pasta dos testes locais</label>
+              <input class="input mono" id="pasta-local-campo" type="text"
+                     placeholder="Pasta com *TESTCASE.py, *TESTSUITE.py e config.json"
+                     spellcheck="false" autocomplete="off">
+              <button type="button" class="btn btn-ghost" id="btn-pasta-local">
+                <span aria-hidden="true">📁</span> Escolher pasta…
+              </button>
+            </div>
+
             <p class="hint" id="testes-origem">—</p>
+            <!-- Situação do config.json da pasta: conferido, fora do esperado
+                 (com quantos campos) ou ausente. -->
+            <p class="hint config-local-status" id="config-local-status" hidden></p>
 
             <div class="selecao-linha">
               <div class="combo" id="combo-testes">
@@ -572,6 +601,42 @@
       <div class="modal-foot">
         <button type="button" class="btn btn-ghost" id="btn-cancelar-excluir">Cancelar</button>
         <button type="button" class="btn btn-danger-ghost" id="btn-confirmar-excluir">Excluir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────── Modal: config.json local fora do esperado ───────────── -->
+  <!-- Largo de propósito (pedido do usuário): a lista de divergências é lida
+       em linhas — campo, encontrado, esperado, por quê — e comprimida numa
+       janela estreita vira uma coluna de texto quebrado. -->
+  <div class="overlay" id="overlay-config-local" hidden>
+    <div class="modal modal-wide" role="dialog" aria-modal="true"
+         aria-labelledby="tit-modal-config-local">
+      <div class="modal-head">
+        <h2 id="tit-modal-config-local">config.json fora do esperado</h2>
+        <button type="button" class="icon-btn" id="btn-fechar-config-local" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint" id="config-local-intro"></p>
+        <div class="divergencias" id="lista-divergencias" role="table"
+             aria-label="Campos fora do esperado">
+          <div class="div-cabecalho" role="row">
+            <span role="columnheader">Campo</span>
+            <span role="columnheader">Encontrado</span>
+            <span role="columnheader">Esperado</span>
+            <span role="columnheader">Por quê</span>
+          </div>
+          <div id="div-linhas"></div>
+        </div>
+        <p class="config-local-pergunta">
+          Deseja alterar o <code class="mono">config.json</code> para os valores esperados?
+          <span class="muted">Só os campos acima mudam; o resto do arquivo fica como está.</span>
+        </p>
+        <p class="form-error" id="config-local-erro" hidden></p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="btn-config-local-nao">Não, manter como está</button>
+        <button type="button" class="btn btn-primary" id="btn-config-local-sim">Sim, ajustar</button>
       </div>
     </div>
   </div>
