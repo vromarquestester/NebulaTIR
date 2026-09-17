@@ -63,6 +63,12 @@ def main() -> None:
         relancar(novo)
         return
 
+    # Uma instância só. Vem DEPOIS da troca de versão: o processo relançado
+    # espera este terminar em vez de se achar a segunda janela.
+    from services.instancia_unica import garantir as garantir_instancia_unica  # noqa: E402
+    if not garantir_instancia_unica("NebulaTIR", titulo="NebulaTIR"):
+        return
+
     import webview  # noqa: E402
 
     from _version import __version__  # noqa: E402
