@@ -35,6 +35,7 @@ from services import (
     paralelos,
     portas,
     preparacao,
+    rastro,
     testes_locais,
 )
 from services import atualizacao as _atualizacao
@@ -1795,3 +1796,66 @@ class Api:
             return {"ok": False, "erro": "URL inválida."}
         webbrowser.open(url)
         return {"ok": True}
+
+    # ─────────────────────────────────────────────────────────
+    # DIAGNÓSTICO
+    # ─────────────────────────────────────────────────────────
+
+    def gerar_diagnostico(self) -> dict:
+        """Zip com logs, debug, config, última corrida e print — ao lado do
+        exe, revelado no Explorer. O usuário anexa na mensagem de suporte."""
+        import tempfile
+
+        from services import captura, diagnostico, instancias as _inst
+        from services.recursos import pasta_do_programa
+
+        try:
+            pasta = pasta_do_programa()
+            try:
+                estado = self.get_status()
+                estado["instancias"] = [
+                    f"{i.get('ambiente')}: pai={i.get('origem')} estado={i.get('estado')} "
+                    f"vivos={i.get('vivos')} pids={i.get('pids')}"
+                    for i in self._instancias.listar()]
+            except Exception as e:
+                estado = {"link_motivo": f"status indisponível: {e}"}
+            print_tela = None
+            try:
+                print_tela = captura.capturar_janela(
+                    "NebulaTIR", Path(tempfile.gettempdir()) / "nebulatir_diagnostico_tela.bmp")
+            except Exception as e:
+                log.debug("[DIAG] Print da janela não capturado: %s", e)
+            zip_path = diagnostico.gerar_pacote(
+                pasta / diagnostico._nome_do_pacote(),
+                pasta_programa=pasta,
+                pasta_logs=log_bridge.pasta_de_log(),
+                arquivos_config=[self._preferencias_arquivo(), self._importados_arquivo(),
+                                 _inst.caminho_do_registro(BASE_DIR)],
+                texto_ambiente=diagnostico.coletar_ambiente(__version__, pasta, estado),
+                print_tela=print_tela)
+            diagnostico.revelar_no_explorer(zip_path)
+            return {"ok": True, "arquivo": str(zip_path)}
+        except Exception as e:
+            log.warning("[DIAG] Falha ao gerar diagnóstico: %s", e)
+            return {"ok": False, "erro": str(e)}
+
+    def _preferencias_arquivo(self) -> Path:
+        return Path(getattr(self._prefs, "_arquivo", "") or "")
+
+    def _importados_arquivo(self) -> Path:
+        return Path(getattr(self._importados, "_arquivo", "") or "")
+
+    # ─────────────────────────────────────────────────────────
+    # RASTRO (debug-*.log)
+    # ─────────────────────────────────────────────────────────
+
+    def rastro_ui(self, evento: str, dados: dict | None = None) -> dict:
+        """O JavaScript conta o que o usuário fez na tela: clique, aba, modal,
+        painel de log, campo alterado. Só vai para o `debug-*.log`."""
+        rastro.ui(str(evento or ""), dados if isinstance(dados, dict) else {})
+        return {"ok": True}
+
+
+# Toda chamada pública da API entra no `debug-*.log` com argumentos, resumo
+# do retorno e duração — menos as de polling (ver `rastro.METODOS_SEM_RASTRO`).
+rastro.rastrear_classe(Api)

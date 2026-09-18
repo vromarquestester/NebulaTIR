@@ -63,6 +63,7 @@ def instalar_handler(fila: queue.Queue) -> QueueLogHandler:
     logging.getLogger("webview").propagate = False
 
     instalar_arquivo()
+    instalar_debug()
     return handler
 
 
@@ -108,6 +109,47 @@ def instalar_arquivo() -> logging.Handler | None:
     return handler
 
 
+# ── Debug: o rastro completo ────────────────────────────────
+# Terceiro nível, pedido em 2026-09-18. O `nebula-*.log` guarda o DEBUG dos
+# módulos da aplicação; o `debug-*.log` guarda TUDO: o logger `rastro` (ação
+# da tela, chamada da API com argumentos e tempo, subprocesso com PID e código
+# de saída, etapa medida) mais qualquer outro logger, sem filtro de origem. É
+# o arquivo que o diagnóstico anexa e onde se reconstrói o que o usuário fez.
+
+PREFIXO_DEBUG = "debug"
+
+
+def instalar_debug() -> logging.Handler | None:
+    import datetime
+    import sys
+
+    from services import rastro
+
+    try:
+        pasta = pasta_de_log()
+        pasta.mkdir(parents=True, exist_ok=True)
+        hoje = datetime.date.today().strftime("%Y%m%d")
+        handler = logging.FileHandler(pasta / f"{PREFIXO_DEBUG}-{hoje}.log",
+                                      encoding="utf-8")
+    except OSError:
+        return None
+
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"))
+    handler.setLevel(logging.DEBUG)
+    logging.getLogger().addHandler(handler)
+    # O logger `rastro` não herda o nível: o root pode estar acima de DEBUG
+    # (é o caso fora do `instalar_handler`), e aí o arquivo nasceria vazio.
+    logging.getLogger("rastro").setLevel(logging.DEBUG)
+    rastro.instalar_gancho_subprocesso()
+    from _version import __version__
+    rastro.nota("programa aberto", versao=__version__, python=sys.version.split()[0],
+                executavel=sys.executable, congelado=getattr(sys, "frozen", False),
+                pid=__import__("os").getpid())
+    return handler
+
+
 def _limpar_antigos() -> int:
     """Apaga log com mais de `DIAS_GUARDADOS` dias: a pasta não pode só crescer."""
     import time
@@ -115,10 +157,11 @@ def _limpar_antigos() -> int:
     limite = time.time() - DIAS_GUARDADOS * 86400
     apagados = 0
     try:
-        for arquivo in pasta_de_log().glob("nebula-*.log"):
-            if arquivo.stat().st_mtime < limite:
-                arquivo.unlink()
-                apagados += 1
+        for padrao in ("nebula-*.log", f"{PREFIXO_DEBUG}-*.log"):
+            for arquivo in pasta_de_log().glob(padrao):
+                if arquivo.stat().st_mtime < limite:
+                    arquivo.unlink()
+                    apagados += 1
     except OSError:
         pass
     return apagados

@@ -1323,12 +1323,91 @@ function renderExecucao() {
   }
 }
 
+/* ── Rastro da tela (debug-*.log) ──────────────────────── */
+
+/* Tudo que o usuário faz na tela vai para o `debug-*.log`, pelo
+   `api.rastro_ui`: clique (com o alvo identificado), campo alterado, tecla
+   de atalho, aba, modal e painel de log. Fire-and-forget: nunca espera nem
+   deixa erro do rastro chegar ao fluxo. O log da tela não muda. */
+function rastro(evento, dados) {
+  try {
+    if (api && api.rastro_ui) api.rastro_ui(evento, dados || {}).catch(() => {});
+  } catch (_) { /* rastro nunca derruba a tela */ }
+}
+
+function alvoDoRastro(el) {
+  const alvo = el.closest('button, a, [role="tab"], li[data-nome], li[data-ambiente], '
+    + 'input, select, textarea, label, summary, [data-acao], [data-rastro]');
+  if (!alvo) return null;
+  const d = { tag: alvo.tagName.toLowerCase() };
+  if (alvo.id) d.id = alvo.id;
+  if (alvo.dataset.acao) d.acao = alvo.dataset.acao;
+  if (alvo.dataset.rastro) d.rastro = alvo.dataset.rastro;
+  if (alvo.dataset.nome) d.nome = alvo.dataset.nome;
+  if (alvo.dataset.ambiente) d.ambiente = alvo.dataset.ambiente;
+  if (alvo.dataset.rotina) d.rotina = alvo.dataset.rotina;
+  if (alvo.getAttribute('role') === 'tab') d.aba = alvo.id || alvo.textContent.trim();
+  if (alvo.disabled) d.desabilitado = true;
+  const texto = (alvo.textContent || alvo.value || alvo.title || '').trim();
+  if (texto && !/password|senha/i.test(alvo.type || '')) d.texto = texto.slice(0, 80);
+  return d;
+}
+
+function valorDoRastro(el) {
+  if (!el) return undefined;
+  if (/password|senha/i.test(el.type || '') || /senha|password/i.test(el.id || '')) return '***';
+  if (el.type === 'checkbox' || el.type === 'radio') return el.checked;
+  return String(el.value ?? '').slice(0, 200);
+}
+
+function ligarRastro() {
+  document.addEventListener('click', (ev) => {
+    const d = alvoDoRastro(ev.target);
+    if (d) rastro('clique', d);
+  }, true);
+  document.addEventListener('change', (ev) => {
+    const el = ev.target;
+    if (!el || !('value' in el)) return;
+    rastro('campo', { id: el.id || el.name || el.tagName.toLowerCase(),
+                      valor: valorDoRastro(el) });
+  }, true);
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' || ev.key === 'Enter' || ev.key === 'F5' || ev.ctrlKey) {
+      rastro('tecla', { tecla: ev.key, ctrl: ev.ctrlKey, alvo: (ev.target && ev.target.id) || '' });
+    }
+  }, true);
+  window.addEventListener('beforeunload', () => rastro('janela', { evento: 'fechando' }));
+  document.addEventListener('visibilitychange', () =>
+    rastro('janela', { visivel: document.visibilityState === 'visible' }));
+}
+
+/* ── Diagnóstico (zip para o suporte) ──────────────────── */
+
+async function gerarDiagnostico() {
+  const btn = $('#btn-diagnostico');
+  btn.disabled = true;
+  abrirLog(true);
+  escreverLinha({ level: 'INFO', text: '[DIAG] Gerando o pacote de diagnóstico…' });
+  try {
+    const r = await api.gerar_diagnostico();
+    if (r.ok) {
+      escreverLinha({ level: 'INFO',
+                      text: `[DIAG] Pacote gerado e aberto no Explorer: ${r.arquivo} — anexe na mensagem para o suporte.` });
+    } else {
+      escreverLinha({ level: 'ERROR', text: `[DIAG] ${r.erro || 'Falha ao gerar o pacote.'}` });
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ── Painel de log (sobreposição do rodapé) ────────────── */
 
 /* Nasce contraído a cada abertura do programa, mesmo com "Fixar" ligado:
    fixar governa o fechamento automático, não o estado inicial. */
 function abrirLog(abrir) {
   const painel = $('#panel-log');
+  if (painel.dataset.aberto !== String(abrir)) rastro('log', { aberto: abrir });
   painel.dataset.aberto = String(abrir);
   $('#btn-log-toggle').setAttribute('aria-expanded', String(abrir));
   // "Fixar" só faz sentido com o painel aberto.
@@ -1419,6 +1498,7 @@ function renderGate(link) {
 let focoAnterior = null;
 
 function abrirModal(id) {
+  rastro('modal', { id, aberto: true });
   focoAnterior = document.activeElement;
   const ov = document.getElementById(id);
   ov.hidden = false;
@@ -1429,6 +1509,7 @@ function abrirModal(id) {
 
 function fecharModal(id) {
   const ov = document.getElementById(id);
+  if (!ov.hidden) rastro('modal', { id, aberto: false });
   ov.hidden = true;
   ov.removeEventListener('keydown', prenderFoco);
   if (focoAnterior && document.contains(focoAnterior)) focoAnterior.focus();
@@ -1825,6 +1906,7 @@ async function confirmarExcluir() {
 
 function ligarEventos() {
   ligarAbas();
+  ligarRastro();
 
   $('#btn-expandir-tudo').addEventListener('click', () => abrirTodasAsRotinas(true));
   $('#btn-contrair-tudo').addEventListener('click', () => abrirTodasAsRotinas(false));
@@ -1914,6 +1996,7 @@ function ligarEventos() {
   });
 
   $('#btn-limpar-log').addEventListener('click', () => { $('#console').innerHTML = ''; });
+  $('#btn-diagnostico').addEventListener('click', gerarDiagnostico);
 
   // ── Log: abrir, fechar e fixar ──
   // O alvo é a barra inteira, não só a seta. O botão do título não tem
