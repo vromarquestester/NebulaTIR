@@ -30,8 +30,10 @@ offline, e está certo** — não há canal para encontrar.
 ## Requisitos
 
 - Windows com **WebView2** (já presente em instalações atuais do Windows 10/11).
-- **Python 3.12**, só via [`uv`](https://docs.astral.sh/uv/). Este projeto não
-  assume `python` no PATH.
+- **Python 3.12** para o venv do TIR, provisionado por quem existir na máquina:
+  [`uv`](https://docs.astral.sh/uv/) (baixa o 3.12 sozinho) ou, sem ele, o
+  Python 3.12 instalado (`py -3.12` / `python`). Outra versão de Python não
+  serve: o TIR exige `==3.12.*`.
 - O Gerenciador de Ambientes rodando, para o canal existir.
 - O TIR exige Python **3.12** — não roda em versão mais nova. O NebulaTIR em si
   roda em versões posteriores, mas a venv do TIR não.
@@ -119,3 +121,7 @@ docs/BUILD.md                      empacotamento e release
 
 **LogNebula** é outro projeto. O código de relatório do TIR foi incorporado aqui
 em `services/tir/`, mas são repositórios distintos.
+
+## Licença
+
+[MIT](LICENSE) — Copyright (c) 2026 Vinicius Marques.
