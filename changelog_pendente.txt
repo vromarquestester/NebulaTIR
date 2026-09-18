@@ -22,21 +22,3 @@
 #
 # ⚠ Nao empurre linhas novas para a main entre criar a tag e o build terminar:
 # a CI zera o arquivo inteiro, e o que entrou nesse intervalo se perderia.
-- Botao Sincronizar saiu (a leitura do Gerenciador ja e automatica a cada 2 s). No lugar dele, embaixo dos ambientes, fica o Varredura, que procura as instancias no HD; o botao repetido do card Instancias no disco foi removido.
-- Configuracoes > Atualizacao: a opcao "Aceitar pre-lancamentos (beta, rc)" saiu da tela.
-- Configuracoes ficou mais larga e em duas colunas: versao e automatico a esquerda, o que mudou e outras ferramentas a direita.
-- Gerar paralelos com o ambiente no ar: avisa que precisa para-lo para clonar e so para com a sua confirmacao. Ele fica parado depois; o Executar TIR sobe de volta como instancia 1.
-- Portas por instancia: a instancia recem-gerada deixa de ficar em amarelo (o slot do clone estava trocado com o do ambiente-pai).
-- Excluir instancia paralela apaga tambem a pasta em NebulaInstancia que o Gerenciador deixava para tras; sem isso o proximo Gerar paralelos falhava com "Pasta destino ja existe". A mensagem de erro da clonagem passa a trazer o motivo real do Gerenciador.
-- O debug-*.log recomeca a cada abertura do programa.
-- Testes locais rodam em paralelo e dividem casos como o catalogo. O config.json da pasta continua mandando, mas URL (por instancia) e Sem tela vem da configuracao do ambiente - antes o Sem tela era ignorado e o Firefox aparecia.
-- Com a origem Testes locais, o botao Configuracao edita o config.json da pasta (URL e Sem tela ficam no ambiente).
-- Log com abas por ambiente: Geral mais uma aba por instancia da corrida; aba fora de vista ganha um ponto quando recebe aviso ou erro.
-- Paralelo: o DbAccess do ambiente principal passa a ser conferido pela porta (7890), nao pelo nome do processo. Com DbAccess isolado por instancia, o do clone enganava a checagem e o principal subia sem banco (login pendurado). O principal agora sobe antes dos clones.
-- Cada instancia paralela grava o log do TIR na propria pasta (log\<instancia>); antes dois lancadores escreviam no mesmo arquivo. O que o lancador imprime tambem vai para o debug-*.log.
-- Antes de executar, o log informa a memoria livre e quantas instancias cabem com folga (so aviso).
-- Clones sobem com o Application Monitor desligado ([APP_MONITOR] enable=0): a porta fixa 32033 colidia entre os AppServer.
-- Paralelo: a porta do WebAgent deixa de ser deslocada por instancia. O agente e um so na estacao (21021); o clone apontava para 21022 e o WebApp ficava em "Tentando se conectar ao WebAgent", sem nunca chegar ao login.
-- Paralelo: falha interna numa instancia (ex.: arquivo em uso ao preparar a rotina) e registrada no log e a instancia segue para a proxima unidade, em vez de ficar "aguardando trabalho" para sempre. O preparo da rotina passa a ser um por vez.
-- Parar selecionados: parada a ultima instancia paralela, o ambiente principal que o NebulaTIR subiu (AppServer e DbAccess) desce junto. O que o Gerenciador subiu nao e tocado; nada mais e encerrado por nome de processo.
-- Banco de dados: duas chaves visiveis para restaurar o banco apos cada rotina - testes pelos fontes (ligada) e testes locais (desligada por padrao: o cadastro do teste costuma existir so no banco do desenvolvedor).
