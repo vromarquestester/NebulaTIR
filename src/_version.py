@@ -23,4 +23,4 @@ Formato: SemVer 2.0.0 — MAJOR.MINOR.PATCH[-PRERELEASE]
     PRERELEASE: alpha, beta, rc seguidos de numero (ex.: -beta1, -rc2)
 """
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
