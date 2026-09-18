@@ -25,6 +25,7 @@ from pathlib import Path
 from _version import __version__
 from services import (
     analise_casos,
+    appserver_ini,
     appservers,
     catalogo_testes,
     config_tir,
@@ -1725,12 +1726,26 @@ class Api:
         slots = self._prefs.max_instancias if self._prefs.paralelo else 1
         plano = portas.alocar(
             slots, base_webapp=base, checar=self._checar_porta,
-            dbaccess_por_instancia=self._prefs.dbaccess_por_instancia)
+            dbaccess_por_instancia=self._prefs.dbaccess_por_instancia,
+            webagent=self._porta_webagent_do_pai(nome))
         if plano.get("ok"):
             plano = {**plano, "instancias": self._marcar_criadas(
                 plano["instancias"], nome)}
         return {**plano, "modo": self._prefs.modo, "slots": slots,
                 "rotulos": portas.ROTULOS}
+
+    def _porta_webagent_do_pai(self, nome: str) -> int:
+        """`[WEBAGENT] Port` do appserver.ini do pai — é onde o agente da
+        estação escuta, e vale para todos os clones."""
+        banco = self._estado.banco_por_nome(nome) or {} if nome else {}
+        exe = banco.get("appserver_exe", "")
+        if not exe:
+            return portas.WEBAGENT_PADRAO
+        try:
+            atual = appserver_ini.ler_portas(appserver_ini.caminho_do_ini(exe))
+        except Exception:
+            atual = {}
+        return int(atual.get("webagent") or portas.WEBAGENT_PADRAO)
 
     def _marcar_criadas(self, instancias: list, nome: str) -> list:
         """Diz quais slots do plano já viraram instância no disco.

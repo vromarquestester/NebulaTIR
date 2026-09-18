@@ -36,3 +36,5 @@
 - Cada instancia paralela grava o log do TIR na propria pasta (log\<instancia>); antes dois lancadores escreviam no mesmo arquivo. O que o lancador imprime tambem vai para o debug-*.log.
 - Antes de executar, o log informa a memoria livre e quantas instancias cabem com folga (so aviso).
 - Clones sobem com o Application Monitor desligado ([APP_MONITOR] enable=0): a porta fixa 32033 colidia entre os AppServer.
+- Paralelo: a porta do WebAgent deixa de ser deslocada por instancia. O agente e um so na estacao (21021); o clone apontava para 21022 e o WebApp ficava em "Tentando se conectar ao WebAgent", sem nunca chegar ao login.
+- Paralelo: falha interna numa instancia (ex.: arquivo em uso ao preparar a rotina) e registrada no log e a instancia segue para a proxima unidade, em vez de ficar "aguardando trabalho" para sempre. O preparo da rotina passa a ser um por vez.

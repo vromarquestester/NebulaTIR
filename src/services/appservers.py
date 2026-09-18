@@ -464,6 +464,22 @@ def garantir_webagent(nome: str, detalhes_por_nome,
             "de": troca.get("de", ""), "para": troca.get("para", ""), "alvo": alvo}
 
 
+def porta_webagent_do_pai(origem: str, detalhes_por_nome) -> int:
+    """`[WEBAGENT] Port` do appserver.ini do ambiente-pai, ou 0 se não soube."""
+    if not origem:
+        return 0
+    try:
+        detalhes = detalhes_por_nome(origem)
+        exe = ((detalhes.get("banco") or {}).get("appserver_exe", "")
+               if detalhes.get("ok") else "")
+        if not exe:
+            return 0
+        return int(appserver_ini.ler_portas(appserver_ini.caminho_do_ini(exe))
+                   .get("webagent") or 0)
+    except Exception:
+        return 0
+
+
 def subir_para_instancias(instancias: list[dict], registro,
                           detalhes_por_nome,
                           dbaccess_por_instancia: bool = True,
@@ -533,7 +549,13 @@ def subir_para_instancias(instancias: list[dict], registro,
             log.info("[INI] %s: SpecialKey própria (%s).", nome,
                      chave["specialkey"])
 
-        portas = item.get("portas") or {}
+        portas = dict(item.get("portas") or {})
+        # WebAgent é da estação: a porta do pai vale para o clone, mesmo que o
+        # registro antigo tenha guardado uma deslocada (21022) — era o que
+        # deixava o WebApp do clone em "Tentando se conectar ao WebAgent".
+        webagent_pai = porta_webagent_do_pai(item.get("origem", ""), detalhes_por_nome)
+        if webagent_pai:
+            portas["webagent"] = webagent_pai
         if portas:
             escrita = appserver_ini.aplicar_portas(
                 appserver_ini.caminho_do_ini(exe), portas)

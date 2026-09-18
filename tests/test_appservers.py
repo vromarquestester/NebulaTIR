@@ -535,3 +535,34 @@ def test_mesma_pasta_do_appserver_aceita_o_dyncall_filho():
         "C:/TOTVS/PAR_2510/Protheus/bin/appserver/appserver.exe")
     assert not appservers.mesma_pasta_do_appserver("", "C:/T/appserver.exe")
     assert not appservers.mesma_pasta_do_appserver("C:/T/.dyncall.exe", "")
+
+
+def test_instancia_sobe_com_o_webagent_do_pai(tmp_path, monkeypatch):
+    """Registro antigo guardou webagent=21022 (deslocado); o agente da estação
+    escuta na 21021 do pai. O clone tem que subir apontando para a do pai —
+    senão o WebApp fica em "Tentando se conectar ao WebAgent" (2026-09-18)."""
+    reg = Instancias(tmp_path / "instancias.json")
+    reg.registrar(ambiente="A_TIR1", origem="A", slot=1, banco="B1",
+                  portas={"webapp": 4322, "webagent": 21022})
+    pai = tmp_path / "A" / "Protheus" / "bin" / "appserver"
+    pai.mkdir(parents=True)
+    (pai / "appserver.ini").write_text("[WEBAGENT]\nPort=21021\n", encoding="latin-1")
+    clone = tmp_path / "A_TIR1" / "Protheus" / "bin" / "appserver"
+    clone.mkdir(parents=True)
+    (clone / "appserver.ini").write_text("[WEBAPP]\nport=4321\n[WEBAGENT]\nPort=21021\n",
+                                         encoding="latin-1")
+    monkeypatch.setattr(appservers, "porta_responde", lambda *a, **k: True)
+    monkeypatch.setattr(appservers, "subir", lambda exe, params="": {"ok": True, "pid": 5})
+    monkeypatch.setattr(appservers, "garantir_webagent", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(appservers.webapp, "garantir", lambda *a, **k: {"ok": True})
+
+    def detalhes(nome):
+        pasta = pai if nome == "A" else clone
+        return {"ok": True, "banco": {"appserver_exe": str(pasta / "appserver.exe")}}
+
+    r = appservers.subir_para_instancias(reg.listar("A"), reg, detalhes,
+                                         dbaccess_por_instancia=False)
+    assert [s["ambiente"] for s in r["subidos"]] == ["A_TIR1"]
+    gravadas = appservers.appserver_ini.ler_portas(clone / "appserver.ini")
+    assert int(gravadas["webagent"]) == 21021
+    assert int(gravadas["webapp"]) == 4322

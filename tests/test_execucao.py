@@ -770,3 +770,27 @@ def test_eventos_do_slot_levam_o_ambiente(cenario, tmp_path):
             logs.append(ev)
     com_ambiente = {ev.get("ambiente") for ev in logs if ev.get("ambiente")}
     assert com_ambiente <= {"AMB_TIR1", "AMB_TIR2"} and com_ambiente
+
+
+def test_excecao_no_slot_nao_mata_a_thread_nem_a_corrida(cenario, tmp_path, monkeypatch):
+    """14:56 de 2026-09-18: slot 1 morreu no preparo e ficou "aguardando
+    trabalho" para sempre. A unidade é marcada com falha e o slot segue."""
+    original = execucao.preparacao.preparar_rotina
+    vezes = {"n": 0}
+
+    def _quebra_uma_vez(*a, **k):
+        vezes["n"] += 1
+        if vezes["n"] == 1:
+            raise PermissionError("arquivo em uso por outro processo")
+        return original(*a, **k)
+    monkeypatch.setattr(execucao.preparacao, "preparar_rotina", _quebra_uma_vez)
+
+    corrida, eventos = _rodar([_rotina(tmp_path, "R1"), _rotina(tmp_path, "R2")],
+                              instancias=1)
+    estados = {i["rotina"]: i["estado"] for i in corrida.instantaneo()["rotinas"]}
+    assert estados["R1"] == execucao.FALHOU
+    assert estados["R2"] == execucao.OK          # a fila continuou
+    textos = []
+    while not eventos.empty():
+        textos.append(eventos.get_nowait().get("text", ""))
+    assert any("falha interna" in t for t in textos)

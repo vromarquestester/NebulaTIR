@@ -37,11 +37,19 @@ BASES = {
     "webapp": 4321,
     "tcp": 8881,
     "httprest": 8080,
-    "webagent": 21021,
     "sqlite": 5056,
     # Só entra quando cada instância tem o próprio DbAccess. Ver `alocar`.
     "dbaccess": 7890,
 }
+
+# O WebAgent é UM por estação, escutando numa porta só (21021 nesta). A chave
+# `[WEBAGENT] Port` do appserver.ini diz ao WebApp onde procurar o agente —
+# não abre porta nenhuma no AppServer. Deslocá-la por instância (21022…)
+# mandava o clone procurar um agente que não existe: a tela ficava em
+# "Tentando se conectar ao WebAgent" e o login nunca vinha (corrida das 14:56
+# de 2026-09-18, provado abrindo o WebApp do clone num navegador). Todos os
+# slots recebem a mesma porta, a do ambiente-pai.
+WEBAGENT_PADRAO = 21021
 
 ROTULOS = {
     "webapp": "WebApp",
@@ -96,7 +104,8 @@ def proxima_livre(inicio: int, reservadas: set[int],
 
 
 def alocar(slots: int, base_webapp: int | None = None,
-           checar=porta_livre, dbaccess_por_instancia: bool = True) -> dict:
+           checar=porta_livre, dbaccess_por_instancia: bool = True,
+           webagent: int | None = None) -> dict:
     """Distribui as portas variáveis entre `slots` instâncias.
 
     O slot 1 tenta ficar com as portas originais do ambiente — assim uma
@@ -105,6 +114,9 @@ def alocar(slots: int, base_webapp: int | None = None,
     Com `dbaccess_por_instancia=False`, todas apontam para a 7890 do template
     e um único processo atende todo mundo — o desenho anterior, mantido para
     dar meia-volta se o isolamento não resolver.
+
+    `webagent` é a porta do agente da estação (a do pai); vai igual em todos
+    os slots e nunca é "deslocada".
     """
     if slots < 1:
         return {"ok": False, "erro": "É preciso ao menos uma instância."}
@@ -132,6 +144,8 @@ def alocar(slots: int, base_webapp: int | None = None,
                             f"instância {indice + 1}."}
         if not dbaccess_por_instancia:
             portas["dbaccess"] = DBACCESS_PADRAO
+        # Mesma para todos: é a porta onde o agente da estação escuta.
+        portas["webagent"] = int(webagent or WEBAGENT_PADRAO)
         instancias.append({
             "slot": indice + 1,
             "portas": portas,

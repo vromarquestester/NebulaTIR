@@ -90,6 +90,24 @@ def _origem_do_anexo(nome: str) -> Path | None:
             or recurso("services", "tir", *partes))
 
 
+def _copiar(origem: Path, alvo: Path, tentativas: int = 5) -> None:
+    """`copy2` com nova tentativa em `PermissionError`.
+
+    No Windows, arquivo aberto por outro processo (o lançador da fatia
+    anterior ainda lendo o `.py`, o antivírus, o Explorer) recusa a
+    sobrescrita por um instante; desistir na primeira derrubava o slot.
+    """
+    import time
+    for tentativa in range(tentativas):
+        try:
+            shutil.copy2(origem, alvo)
+            return
+        except PermissionError:
+            if tentativa == tentativas - 1:
+                raise
+            time.sleep(0.3 * (tentativa + 1))
+
+
 def _copiar_anexos(destino: Path) -> list[str]:
     faltando = []
     for nome in ANEXOS:
@@ -97,7 +115,7 @@ def _copiar_anexos(destino: Path) -> list[str]:
         if origem is None:
             faltando.append(nome)
             continue
-        shutil.copy2(origem, destino / nome)
+        _copiar(origem, destino / nome)
 
     for nome in ANEXOS_ASSETS:
         origem = _origem_do_anexo(nome)
@@ -108,7 +126,7 @@ def _copiar_anexos(destino: Path) -> list[str]:
         alvo.parent.mkdir(parents=True, exist_ok=True)
         # Fonte não muda; recopiar 700 KB a cada preparo seria desperdício.
         if not alvo.exists() or alvo.stat().st_size != origem.stat().st_size:
-            shutil.copy2(origem, alvo)
+            _copiar(origem, alvo)
     return faltando
 
 
@@ -151,8 +169,8 @@ def preparar_rotina(ambiente: str, rotina: dict, config: dict,
         pasta_log = pasta_log / instancia
     pasta_log.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(suite, destino / suite.name)
-    shutil.copy2(case, destino / case.name)
+    _copiar(suite, destino / suite.name)
+    _copiar(case, destino / case.name)
     faltando = _copiar_anexos(destino)
 
     # O LogFolder aponta para a pasta desta rotina — é o que separa os logs de

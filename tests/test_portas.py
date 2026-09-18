@@ -19,7 +19,7 @@ def test_uma_instancia_fica_com_as_portas_originais():
     """Sequencial não pode mudar o que já funciona."""
     r = portas.alocar(1, checar=lambda p: True)
     assert r["ok"] is True
-    assert r["instancias"][0]["portas"] == portas.BASES
+    assert r["instancias"][0]["portas"] == {**portas.BASES, "webagent": portas.WEBAGENT_PADRAO}
     assert r["instancias"][0]["deslocadas"] == []
 
 
@@ -34,7 +34,14 @@ def test_cada_instancia_soma_um():
     r = portas.alocar(3, checar=lambda p: True)
     assert [i["portas"]["webapp"] for i in r["instancias"]] == [4321, 4322, 4323]
     assert [i["portas"]["tcp"] for i in r["instancias"]] == [8881, 8882, 8883]
-    assert [i["portas"]["webagent"] for i in r["instancias"]] == [21021, 21022, 21023]
+    # WebAgent é um por estação: igual em todos, nunca deslocado.
+    assert [i["portas"]["webagent"] for i in r["instancias"]] == [21021, 21021, 21021]
+    assert all("webagent" not in i["deslocadas"] for i in r["instancias"])
+
+
+def test_webagent_segue_a_porta_do_pai():
+    r = portas.alocar(2, checar=lambda p: True, webagent=21030)
+    assert [i["portas"]["webagent"] for i in r["instancias"]] == [21030, 21030]
 
 
 def test_porta_em_uso_pula_para_a_proxima_livre():
@@ -43,8 +50,9 @@ def test_porta_em_uso_pula_para_a_proxima_livre():
 
 
 def test_nenhuma_porta_se_repete_entre_instancias():
+    """Menos a do WebAgent, que é da estação e vai igual em todas."""
     r = portas.alocar(4, checar=lambda p: True)
-    todas = [p for i in r["instancias"] for p in i["portas"].values()]
+    todas = [p for i in r["instancias"] for c, p in i["portas"].items() if c != "webagent"]
     assert len(todas) == len(set(todas))
 
 
@@ -72,7 +80,7 @@ def test_licenseclient_fica_fora_da_alocacao():
     r = portas.alocar(3, checar=lambda p: True)
     assert r["imutaveis"] == {"licenseclient": 8009}
     for instancia in r["instancias"]:
-        assert set(instancia["portas"]) == set(portas.BASES)
+        assert set(instancia["portas"]) == set(portas.BASES) | {"webagent"}
         assert 8009 not in instancia["portas"].values()
 
 
@@ -90,9 +98,9 @@ def test_cada_instancia_ganha_a_propria_porta_de_dbaccess():
 
 
 def test_dbaccess_nao_colide_com_outra_chave():
-    """Todas as portas de todas as instâncias são distintas entre si."""
+    """Todas as portas alocadas são distintas entre si (WebAgent é fixo)."""
     r = portas.alocar(3, checar=lambda p: True)
-    todas = [p for i in r["instancias"] for p in i["portas"].values()]
+    todas = [p for i in r["instancias"] for c, p in i["portas"].items() if c != "webagent"]
     assert len(todas) == len(set(todas))
 
 

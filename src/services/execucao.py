@@ -68,6 +68,7 @@ class Execucao:
         # para a execução como está (ver `preparacao.preparar_rotina`).
         self._config_literal = bool(config_literal)
         self._thread_local = threading.local()
+        self._lock_preparo = threading.Lock()
         self.instancias = max(1, int(instancias))
         # Em paralelo cada trabalhador tem o SEU ambiente (e o seu banco), e é
         # nele que a restauração acontece. Em sequencial, todos apontam para o
@@ -320,7 +321,21 @@ class Execucao:
             log.info("[TIR] Slot %d (%s) pegou %s [%s].", slot,
                      self.ambiente_do_slot(slot), unidade["rotina"]["rotina"],
                      ", ".join(unidade["casos"]) or "rotina inteira")
-            self._rodar_uma(slot, unidade["rotina"], unidade["casos"])
+            try:
+                self._rodar_uma(slot, unidade["rotina"], unidade["casos"])
+            except Exception as e:
+                # Exceção aqui matava a thread em silêncio: o slot ficava
+                # "aguardando trabalho" para sempre e a corrida nunca acabava
+                # (14:56 de 2026-09-18: slot 1 morreu no preparo, slot 2 seguiu
+                # sozinho). Registra, marca a unidade e continua com a fila.
+                nome = unidade["rotina"]["rotina"]
+                log.exception("[TIR] Slot %d (%s) falhou em %s", slot,
+                              self.ambiente_do_slot(slot), nome)
+                self._emitir(f"{nome}: falha interna na instância {slot} — "
+                             f"{type(e).__name__}: {e}", "ERROR")
+                self._anotar(nome, estado=FALHOU,
+                             mensagem=f"Falha interna: {type(e).__name__}: {e}")
+                self._slot_libera(slot)
 
     def _rodar_uma(self, slot: int, rotina: dict, casos: list) -> None:
         nome = rotina["rotina"]
@@ -340,10 +355,15 @@ class Execucao:
         # leitor, e mudar o nome à toa complicaria a inspeção manual da pasta.
         # Em paralelo cada instância tem o seu — é o que impede duas fatias da
         # mesma rotina de sobrescrever a URL uma da outra.
-        preparo = preparacao.preparar_rotina(
-            self.ambiente, rotina, config,
-            instancia="" if ambiente == self.ambiente else ambiente,
-            literal=self._config_literal)
+        #
+        # Um preparo por vez: duas fatias da MESMA rotina copiam os mesmos
+        # fontes para a mesma pasta, e no Windows a segunda cópia tropeça na
+        # primeira (arquivo em uso). Foi o que derrubou o slot 1 às 14:56.
+        with self._lock_preparo:
+            preparo = preparacao.preparar_rotina(
+                self.ambiente, rotina, config,
+                instancia="" if ambiente == self.ambiente else ambiente,
+                literal=self._config_literal)
         if not preparo.get("ok"):
             self._anotar(nome, estado=FALHOU, mensagem=preparo.get("erro", ""))
             self._emitir(f"{nome}: {preparo.get('erro')}", "ERROR")
