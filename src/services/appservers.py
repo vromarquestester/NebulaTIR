@@ -171,6 +171,22 @@ def mesmo_executavel(a: str, b: str) -> bool:
     return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 
 
+def mesma_pasta_do_appserver(exe_dono: str, appserver_exe: str) -> bool:
+    """O processo que escuta a porta pertence a este AppServer?
+
+    Comparar exe com exe falhava no real (2026-09-18): a porta do WebApp não
+    é escutada pelo `appserver.exe`, e sim por um filho dele na mesma pasta,
+    `.dyncall.exe`. Reproduzido subindo o PAR_2510: `netstat` dava a 4321 ao
+    `C:/TOTVS/PAR_2510/Protheus/bin/appserver/.dyncall.exe`, e o
+    desempate acusava "AppServer de outro ambiente" para o próprio ambiente.
+    A pasta é o que identifica o ambiente — o nome do binário, não.
+    """
+    if not exe_dono or not appserver_exe:
+        return False
+    pasta = os.path.normcase(os.path.normpath(os.path.dirname(exe_dono)))
+    return pasta == os.path.normcase(os.path.normpath(os.path.dirname(appserver_exe)))
+
+
 def esperar_porta(porta: int, limite_seg: float | None = None,
                   parar=None) -> dict:
     """Espera a porta aceitar conexão.

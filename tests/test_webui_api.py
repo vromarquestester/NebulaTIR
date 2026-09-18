@@ -749,3 +749,53 @@ def test_reiniciar_agora_marca_o_reinicio(api):
     api._set_window(_Janela())
     api.fechar_janela(True)
     assert api.reinicio_pedido() is True
+
+
+def test_executar_reaproveita_porta_do_dyncall_do_proprio_ambiente(
+        api, bridge_falso, monkeypatch):
+    """Caso real de 2026-09-18: PAR_2510 no ar pelo Gerenciador, porta 4321
+    escutada pelo `.dyncall.exe` da pasta dele. Tem que reaproveitar, não
+    acusar "outro ambiente" nem parar o ambiente do Gerenciador."""
+    from services import appservers
+    _dois_na_mesma_porta(api, bridge_falso)
+    api.salvar_selecao("PAR_2510", ["MATA143"])
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: True)
+    monkeypatch.setattr(appservers, "dono_da_porta",
+                        lambda porta: {"pid": 1, "exe": "C:/T/.dyncall.exe"})
+    monkeypatch.setattr(api_mod.execucao, "preparar_ambiente_python",
+                        lambda fila: {"ok": True, "versao_tir": "x"})
+    paradas = []
+    monkeypatch.setattr(api._estado, "parar_ambiente",
+                        lambda nome: paradas.append(nome) or {"ok": True})
+    monkeypatch.setattr(api, "_subir_principal",
+                        lambda nome: {"ok": True, "reaproveitado": True})
+    monkeypatch.setattr(api_mod.execucao, "Execucao",
+                        lambda **kw: type("E", (), {"iniciar": lambda self: None,
+                                                    "ativa": lambda self: True})())
+    r = api.executar_tir("PAR_2510")
+    assert r["ok"] is True, r
+    assert paradas == []
+    assert api._principal_e_nosso is False
+    textos = [e["text"] for e in api.poll_logs()]
+    assert any("reaproveitando" in t for t in textos)
+
+
+def test_executar_nao_avisa_quando_ambiente_ja_estava_parado(
+        api, bridge_falso, monkeypatch):
+    from services import appservers
+    api.importar_ambiente("PAR_2510")
+    api.salvar_selecao("PAR_2510", ["MATA143"])
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: False)
+    monkeypatch.setattr(api_mod.execucao, "preparar_ambiente_python",
+                        lambda fila: {"ok": True, "versao_tir": "x"})
+    monkeypatch.setattr(api._estado, "parar_ambiente",
+                        lambda nome: {"ok": False,
+                                      "erro": 'O ambiente "PAR_2510" não está em execução.'})
+    monkeypatch.setattr(api, "_subir_principal", lambda nome: {"ok": True})
+    monkeypatch.setattr(api_mod.execucao, "Execucao",
+                        lambda **kw: type("E", (), {"iniciar": lambda self: None,
+                                                    "ativa": lambda self: True})())
+    r = api.executar_tir("PAR_2510")
+    assert r["ok"] is True, r
+    avisos = [e for e in api.poll_logs() if e.get("level") == "WARNING"]
+    assert not any("Não consegui parar" in a["text"] for a in avisos)

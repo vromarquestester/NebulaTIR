@@ -489,3 +489,15 @@ def test_exe_do_pid_do_proprio_processo():
     import os
     exe = appservers.exe_do_pid(os.getpid())
     assert exe.lower().endswith(("python.exe", "pythonw.exe", "python3.exe"))
+
+
+def test_mesma_pasta_do_appserver_aceita_o_dyncall_filho():
+    """Quem escuta a porta do WebApp é o `.dyncall.exe`, não o appserver.exe."""
+    assert appservers.mesma_pasta_do_appserver(
+        "C:/TOTVS/PAR_2510/Protheus/bin/appserver/.dyncall.exe",
+        "c:/totvs/par_2510/protheus/bin/appserver/APPSERVER.EXE")
+    assert not appservers.mesma_pasta_do_appserver(
+        "C:/TOTVS/PAR_2610/Protheus/bin/appserver/.dyncall.exe",
+        "C:/TOTVS/PAR_2510/Protheus/bin/appserver/appserver.exe")
+    assert not appservers.mesma_pasta_do_appserver("", "C:/T/appserver.exe")
+    assert not appservers.mesma_pasta_do_appserver("C:/T/.dyncall.exe", "")

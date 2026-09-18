@@ -342,8 +342,10 @@ class Api:
                 cache[chave] = dono
         if not dono.get("exe"):
             return True
-        return appservers.mesmo_executavel(dono["exe"],
-                                           banco.get("appserver_exe", ""))
+        # Pela pasta, não pelo nome: quem escuta é o `.dyncall.exe` filho do
+        # AppServer, e ele mora na mesma pasta do `appserver.exe` do ambiente.
+        return appservers.mesma_pasta_do_appserver(dono["exe"],
+                                                   banco.get("appserver_exe", ""))
 
     def _porta_compartilhada(self, nome: str) -> bool:
         """Outro ambiente importado está cadastrado na mesma porta que `nome`?"""
@@ -785,7 +787,10 @@ class Api:
             self._fila.put({"kind": "log", "level": "INFO",
                             "text": "[FASE] Liberando o ambiente do Gerenciador"})
             parada = self._estado.parar_ambiente(nome)
-            if not parada.get("ok"):
+            if not parada.get("ok") and "não está em execução" not in parada.get("erro", ""):
+                # Ambiente já parado não é falha — é o caso normal de quem
+                # parou pela tela do Gerenciador antes de executar. Só o que
+                # sobrar merece aviso.
                 self._fila.put({"kind": "log", "level": "WARNING",
                                 "text": f"Não consegui parar {nome} pelo "
                                         f"Gerenciador: {parada.get('erro', '')}"})
