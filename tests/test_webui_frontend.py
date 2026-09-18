@@ -56,7 +56,7 @@ def test_todo_id_usado_no_js_existe_no_html():
 def test_botoes_do_gate_existem():
     """Se um destes sumir do HTML, `atualizarBotoes` quebra silenciosamente."""
     ids = _ids_do_html()
-    for botao in ("btn-importar", "btn-sincronizar", "btn-configuracao",
+    for botao in ("btn-importar", "btn-inventario", "btn-configuracao",
                   "btn-excluir", "btn-executar-tir", "chip-link", "gate"):
         assert botao in ids
 

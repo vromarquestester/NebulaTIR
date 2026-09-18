@@ -113,7 +113,7 @@ apontando para a Window trava o boot por minutos. Há teste travando a regra.
 
 ## Estado atual
 
-Pronto: canal, descoberta, gate, importar/excluir/sincronizar, interface.
+Pronto: canal, descoberta, gate, importar/excluir, conferir disco, interface.
 
 Pendente: execução do TIR, clonagem pelo NebulaTIR, edição do `appserver.ini`
 daqui, rotas `POST` no bridge. A interface já reserva os lugares — o card TIR, o

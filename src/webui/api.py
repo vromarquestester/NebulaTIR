@@ -446,19 +446,6 @@ class Api:
         }
         return detalhes
 
-    def sincronizar(self) -> dict:
-        """Releitura imediata, sem esperar o ciclo de 2 s."""
-        estado = self._estado.atualizar()
-        if not estado["online"]:
-            return {"ok": False, "erro": estado["motivo"] or MOTIVO_OFFLINE}
-        orfaos = [n for n in self._importados.nomes
-                  if not self._estado.banco_por_nome(n)]
-        if orfaos:
-            log.warning("[SYNC] Sem correspondência no Gerenciador: %s",
-                        ", ".join(orfaos))
-        return {"ok": True, "orfaos": orfaos,
-                "total": len(self._importados.nomes)}
-
     # ─────────────────────────────────────────────────────────
     # CATÁLOGO DE TESTES
     # ─────────────────────────────────────────────────────────

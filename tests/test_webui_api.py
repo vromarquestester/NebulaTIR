@@ -99,7 +99,6 @@ def test_status_offline_zera_vpn_e_sql(api, bridge_falso):
     ("importar_ambiente", ("PAR_2510",)),
     ("remover_importado", ("PAR_2510",)),
     ("detalhes_importado", ("PAR_2510",)),
-    ("sincronizar", ()),
 ])
 def test_nenhuma_acao_passa_com_gerenciador_offline(api, bridge_falso, acao, args):
     """O backend não confia na UI: revalida o gate em cada ação."""
@@ -183,13 +182,12 @@ def test_remover_nao_toca_no_gerenciador(api, bridge_falso):
     assert any(b["ambiente"] == "PAR_2510" for b in bridge_falso.payload["bancos"])
 
 
-def test_sincronizar_aponta_orfaos(api, bridge_falso):
+def test_orfao_aparece_no_status_sem_botao(api, bridge_falso):
+    """O botão Sincronizar saiu (2026-09-18): o polling de 2 s já relê o
+    Gerenciador, e o órfão é marcado pelo status."""
     api.importar_ambiente("PAR_2510")
     bridge_falso.payload["bancos"].pop(0)      # removido no Gerenciador
-    r = api.sincronizar()
-    assert r["ok"] is True
-    assert r["orfaos"] == ["PAR_2510"]
-    # A UI precisa marcar o item, então o status carrega a informação.
+    api._estado.atualizar()
     assert api.get_status()["ambientes"]["PAR_2510"]["existe_no_gerenciador"] is False
 
 

@@ -1448,7 +1448,7 @@ function atualizarBotoes() {
   const rodando = state.execucao.ativa === true;
   const mapa = [
     ['#btn-importar', link && pronto && livre && !rodando],
-    ['#btn-sincronizar', link],
+    ['#btn-inventario', true],
     ['#btn-configuracao', temSel],   // config é dado local: não exige o link
     ['#btn-excluir', link && temSel && livre && !rodando],
     ['#btn-executar-tir', state.podeExecutar === true],
@@ -1983,17 +1983,6 @@ function ligarEventos() {
   $('#btn-fechar-excluir').addEventListener('click', () => fecharModal('overlay-excluir'));
   $('#btn-confirmar-excluir').addEventListener('click', confirmarExcluir);
 
-  $('#btn-sincronizar').addEventListener('click', async () => {
-    const r = await api.sincronizar();
-    if (r.ok) {
-      const s = await api.get_status();
-      state.importados = s.importados;
-      state.statusAmbientes = s.ambientes;
-      renderLista();
-      await renderDetalhes();
-    }
-    atualizarBotoes();
-  });
 
   $('#btn-limpar-log').addEventListener('click', () => { $('#console').innerHTML = ''; });
   $('#btn-diagnostico').addEventListener('click', gerarDiagnostico);
