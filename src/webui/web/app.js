@@ -2078,10 +2078,25 @@ function ligarEventos() {
     sincronizarTodos();
   });
 
-  $('#btn-gerar-paralelos').addEventListener('click', async () => {
+  $('#btn-gerar-paralelos').addEventListener('click', () => gerarParalelos(false));
+  $('#btn-confirmar-parar-clonar').addEventListener('click', async () => {
+    fecharModal('overlay-parar-clonar');
+    await gerarParalelos(true);
+  });
+  for (const sel of ['#btn-cancelar-parar-clonar', '#btn-fechar-parar-clonar']) {
+    $(sel).addEventListener('click', () => fecharModal('overlay-parar-clonar'));
+  }
+
+  async function gerarParalelos(pararPai) {
     abrirLog(true);
     mostrarErroParalelos('');
-    const r = await api.gerar_paralelos(state.selecionado);
+    const r = await api.gerar_paralelos(state.selecionado, pararPai);
+    if (r.precisa_parar) {
+      // Pai no ar: clonar exige pará-lo. Só com o OK do usuário.
+      $('#parar-clonar-msg').textContent = r.erro;
+      abrirModal('overlay-parar-clonar');
+      return;
+    }
     if (r.erros && r.erros.length) {
       mostrarErroParalelos(r.erros.map(e => `${e.ambiente}: ${e.erro}`).join('\n'));
     } else if (!r.ok) {
@@ -2089,7 +2104,7 @@ function ligarEventos() {
     }
     await renderParalelos();
     await renderInventario();
-  });
+  }
 
   // ── Instâncias no disco ──
   $('#btn-inventario').addEventListener('click', renderInventario);

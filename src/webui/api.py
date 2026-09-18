@@ -1239,11 +1239,18 @@ class Api:
             if caminhos:
                 self._instancias.anotar_caminhos(item["ambiente"], caminhos)
 
-    def gerar_paralelos(self, nome: str) -> dict:
+    def gerar_paralelos(self, nome: str, parar_pai: bool = False) -> dict:
         """Clona os ambientes paralelos e trata as portas.
 
         Precisa existir antes de executar em paralelo — sem ambiente próprio,
         os slots dividiriam o mesmo banco, que é o que não pode.
+
+        O pai é a instância 1 e, desde 2026-09-18, não é mais parado para
+        executar — mas para **clonar** precisa estar parado: a cópia da
+        instalação (`copytree`) tropeça em arquivo que o AppServer segura.
+        Pai no ar sem `parar_pai` devolve `precisa_parar=True` para a tela
+        confirmar; com `parar_pai`, para pelo Gerenciador, espera a porta
+        fechar e segue. Ele fica parado depois — o Executar sobe de volta.
         """
         if not self._estado.online:
             return {"ok": False, "erro": MOTIVO_OFFLINE}
@@ -1253,6 +1260,29 @@ class Api:
             return {"ok": False, "erro": "O Gerenciador está ocupado."}
 
         banco = self._estado.banco_por_nome(nome) or {}
+        porta = banco.get("port", "")
+        no_ar = self._porta_no_ar(porta)
+        if no_ar and self._porta_compartilhada(nome):
+            no_ar = self._porta_e_deste(porta, banco)
+        if no_ar and self._prefs.max_instancias > 1:
+            if not parar_pai:
+                return {"ok": False, "precisa_parar": True,
+                        "erro": f"{nome} está no ar (porta {porta}). Para clonar "
+                                f"é preciso pará-lo: o AppServer segura arquivos "
+                                f"da instalação que a cópia precisa ler."}
+            self._fila.put({"kind": "log", "level": "INFO",
+                            "text": f"[FASE] Parando {nome} para clonar"})
+            parada = self._estado.parar_ambiente(nome)
+            if not parada.get("ok") and "não está em execução" not in parada.get("erro", ""):
+                return {"ok": False,
+                        "erro": f"Não consegui parar {nome} pelo Gerenciador: "
+                                f"{parada.get('erro', '')}"}
+            livre = appservers.esperar_porta_livre(int(porta))
+            if not livre.get("ok"):
+                return {"ok": False, "erro": livre["erro"]}
+            self._fila.put({"kind": "log", "level": "INFO",
+                            "text": f"{nome} parado. Depois da clonagem ele fica "
+                                    f"parado — o Executar TIR sobe de volta."})
         # O ambiente PAI é uma das instâncias — ele já existe, já tem banco e
         # já tem porta. Pedir 3 instâncias significa clonar 2.
         #
@@ -1651,11 +1681,19 @@ class Api:
         criada, o aviso perdeu a função: a porta está gravada e o destaque só
         chamava atenção para uma decisão que já foi tomada.
         """
-        registradas = {i.get("slot"): i
+        # O slot 1 do plano é o PAI, que já existe; o clone `_TIRk` (slot k no
+        # registro) ocupa o slot k+1 do plano — mesmo deslocamento de
+        # `paralelos.gerar`. Casar slot com slot marcava o pai como "criado"
+        # pelo clone e deixava o clone amarelo para sempre (2026-09-18).
+        registradas = {int(i.get("slot") or 0) + 1: i
                        for i in self._instancias.listar(nome or None)}
         marcadas = []
         for item in instancias:
-            registro = registradas.get(item.get("slot")) or {}
+            slot = item.get("slot")
+            if slot == 1:
+                marcadas.append({**item, "criada": bool(nome), "ambiente": nome or ""})
+                continue
+            registro = registradas.get(slot) or {}
             marcadas.append({**item,
                              "criada": bool(registro),
                              "ambiente": registro.get("ambiente", "")})

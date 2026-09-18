@@ -212,6 +212,21 @@ def esperar_porta(porta: int, limite_seg: float | None = None,
                     f"O AppServer subiu mas não publicou o WebApp."}
 
 
+def esperar_porta_livre(porta: int, limite_seg: float = 60,
+                       intervalo_seg: float | None = None) -> dict:
+    """Espera a porta parar de responder — o AppServer leva segundos para
+    soltar tudo depois do `parar`, e clonar antes disso pega arquivo em uso."""
+    intervalo = INTERVALO_SONDA_SEG if intervalo_seg is None else intervalo_seg
+    fim = time.monotonic() + limite_seg
+    while time.monotonic() < fim:
+        if not porta_responde(int(porta)):
+            return {"ok": True, "porta": int(porta)}
+        time.sleep(intervalo)
+    return {"ok": False,
+            "erro": f"A porta {porta} continuou respondendo por {int(limite_seg)}s "
+                    f"depois do parar. Pare o ambiente e tente de novo."}
+
+
 def subir(appserver_exe: str, params: str = "") -> dict:
     """Inicia um AppServer e devolve o PID.
 

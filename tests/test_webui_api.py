@@ -495,15 +495,20 @@ def test_medir_instancia_desconhecida_e_erro_claro(base_isolada):
 
 
 def test_plano_marca_o_slot_que_ja_virou_instancia(api):
-    """A tela tira o destaque amarelo de quem já foi criado."""
+    """A tela tira o destaque amarelo de quem já foi criado.
+
+    Slot 1 do plano é o pai (sempre existe); o clone `_TIR1` (slot 1 no
+    registro) é o slot 2 do plano — como o `paralelos.gerar` distribui."""
     api.importar_ambiente("PAR_2510")
     api.salvar_preferencias({"modo": "paralelo", "max_instancias": 3})
-    api._instancias.registrar(ambiente="PAR_2510_TIR2", origem="PAR_2510",
-                              slot=2, banco="B2", portas={})
+    api._instancias.registrar(ambiente="PAR_2510_TIR1", origem="PAR_2510",
+                              slot=1, banco="B1", portas={})
 
     plano = api.plano_de_portas("PAR_2510")["instancias"]
-    assert [i["criada"] for i in plano] == [False, True, False]
-    assert plano[1]["ambiente"] == "PAR_2510_TIR2"
+    assert [i["criada"] for i in plano] == [True, True, False]
+    assert plano[0]["ambiente"] == "PAR_2510"
+    assert plano[1]["ambiente"] == "PAR_2510_TIR1"
+    assert plano[2]["ambiente"] == ""
 
 
 def test_instancia_de_outro_ambiente_nao_marca_o_plano(api):
@@ -514,7 +519,7 @@ def test_instancia_de_outro_ambiente_nao_marca_o_plano(api):
                               slot=1, banco="B1", portas={})
 
     plano = api.plano_de_portas("PAR_2510")["instancias"]
-    assert [i["criada"] for i in plano] == [False, False]
+    assert [i["criada"] for i in plano] == [True, False]     # só o pai
 
 
 def test_preferencias_sao_globais(api):
@@ -797,3 +802,51 @@ def test_executar_nao_avisa_quando_ambiente_ja_estava_parado(
     assert r["ok"] is True, r
     avisos = [e for e in api.poll_logs() if e.get("level") == "WARNING"]
     assert not any("Não consegui parar" in a["text"] for a in avisos)
+
+
+# ── Gerar paralelos com o pai no ar ─────────────────────────
+
+def _prepara_paralelo(api, monkeypatch, no_ar: bool):
+    from services import appservers
+    api.importar_ambiente("PAR_2510")
+    api.salvar_preferencias({"modo": "paralelo", "max_instancias": 2})
+    monkeypatch.setattr(api, "_porta_no_ar", lambda porta: no_ar)
+    chamadas = []
+    monkeypatch.setattr(api_mod.paralelos, "gerar",
+                        lambda **kw: chamadas.append("gerar") or {"ok": True, "criados": ["PAR_2510_TIR1"],
+                                                                    "reaproveitados": []})
+    monkeypatch.setattr(appservers, "esperar_porta_livre", lambda porta, **k: {"ok": True})
+    return chamadas
+
+
+def test_gerar_paralelos_com_pai_no_ar_pede_confirmacao(api, monkeypatch):
+    chamadas = _prepara_paralelo(api, monkeypatch, no_ar=True)
+    r = api.gerar_paralelos("PAR_2510")
+    assert r["ok"] is False and r["precisa_parar"] is True
+    assert "4321" in r["erro"]
+    assert chamadas == []
+
+
+def test_gerar_paralelos_confirmado_para_o_pai_e_clona(api, monkeypatch):
+    chamadas = _prepara_paralelo(api, monkeypatch, no_ar=True)
+    paradas = []
+    monkeypatch.setattr(api._estado, "parar_ambiente",
+                        lambda nome: paradas.append(nome) or {"ok": True})
+    r = api.gerar_paralelos("PAR_2510", parar_pai=True)
+    assert r["ok"] is True and r["criados"] == ["PAR_2510_TIR1"]
+    assert paradas == ["PAR_2510"] and chamadas == ["gerar"]
+
+
+def test_gerar_paralelos_com_pai_parado_nao_pergunta(api, monkeypatch):
+    chamadas = _prepara_paralelo(api, monkeypatch, no_ar=False)
+    monkeypatch.setattr(api._estado, "parar_ambiente",
+                        lambda nome: pytest.fail("não devia parar"))
+    r = api.gerar_paralelos("PAR_2510")
+    assert r["ok"] is True and chamadas == ["gerar"]
+
+
+def test_gerar_paralelos_uma_instancia_nao_para_o_pai(api, monkeypatch):
+    _prepara_paralelo(api, monkeypatch, no_ar=True)
+    api.salvar_preferencias({"modo": "paralelo", "max_instancias": 1})
+    r = api.gerar_paralelos("PAR_2510")
+    assert r["ok"] is True and "precisa_parar" not in r

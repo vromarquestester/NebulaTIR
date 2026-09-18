@@ -605,6 +605,31 @@
     </div>
   </div>
 
+  <!-- ───────────── Modal: parar o ambiente-pai para clonar ───────────── -->
+  <!-- O pai é a instância 1 e não é parado para executar; para clonar é.
+       Pedido do usuário (2026-09-18): avisar e pedir confirmação, nunca
+       parar por conta própria. -->
+  <div class="overlay" id="overlay-parar-clonar" hidden>
+    <div class="modal modal-narrow" role="dialog" aria-modal="true" aria-labelledby="tit-modal-parar-clonar">
+      <div class="modal-head">
+        <h2 id="tit-modal-parar-clonar">Parar para clonar</h2>
+        <button type="button" class="icon-btn" id="btn-fechar-parar-clonar" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="alert-icon" aria-hidden="true">!</p>
+        <p class="alert-msg" id="parar-clonar-msg"></p>
+        <p class="hint" style="text-align:center; margin-top:12px;">
+          Ele fica parado depois da clonagem; o Executar TIR sobe de volta
+          como instância 1.
+        </p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="btn-cancelar-parar-clonar">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btn-confirmar-parar-clonar">Parar e clonar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ───────────── Modal: config.json local fora do esperado ───────────── -->
   <!-- Largo de propósito (pedido do usuário): a lista de divergências é lida
        em linhas — campo, encontrado, esperado, por quê — e comprimida numa
