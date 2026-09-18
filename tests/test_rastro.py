@@ -114,3 +114,22 @@ def test_instalar_debug_cria_arquivo_e_limpeza_alcanca_os_dois(tmp_path, monkeyp
     os.utime(velho, (antigo, antigo))
     assert log_bridge._limpar_antigos() == 1
     assert not velho.exists() and arquivos[0].exists()
+
+
+def test_gancho_registra_saida_via_poll(capturado, monkeypatch):
+    """O lançador do TIR é vigiado por `poll()`, não por `wait()`."""
+    monkeypatch.setattr(rastro, "_gancho_instalado", False)
+    init, wait, poll = (subprocess.Popen.__init__, subprocess.Popen.wait,
+                        subprocess.Popen.poll)
+    try:
+        rastro.instalar_gancho_subprocesso()
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        import time
+        for _ in range(100):
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+        proc.poll()
+    finally:
+        subprocess.Popen.__init__, subprocess.Popen.wait, subprocess.Popen.poll = init, wait, poll
+    assert capturado.text.count("saiu com 0") == 1

@@ -124,3 +124,17 @@ def test_api_gerar_diagnostico(tmp_path, monkeypatch):
     with zipfile.ZipFile(r["arquivo"]) as z:
         assert "ambiente.txt" in z.namelist()
         assert "logs/debug-20260918.log" in z.namelist()
+
+
+def test_config_importada_sai_mascarada(tmp_path):
+    prog = _programa(tmp_path)
+    imp = prog / "config" / "ambientes_importados.json"
+    imp.parent.mkdir(exist_ok=True)
+    imp.write_text(json.dumps({"ambientes": [{"nome": "PAR", "config": {"Password": "1234"}}]}),
+                   encoding="utf-8")
+    zip_path = diagnostico.gerar_pacote(
+        prog / "diag.zip", pasta_programa=prog, pasta_logs=prog / "logs",
+        arquivos_config=[imp], texto_ambiente="x")
+    with zipfile.ZipFile(zip_path) as z:
+        dados = json.loads(z.read("config/ambientes_importados.json"))
+    assert dados["ambientes"][0]["config"]["Password"] == "***"

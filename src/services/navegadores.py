@@ -28,6 +28,9 @@ CONHECIDOS = [
 # Sem registro legível, o formulário não pode ficar sem opção nenhuma.
 RESERVA = ["Chrome", "Firefox", "Edge"]
 
+CHAVE_REGISTRO = r"SOFTWARE\Clients\StartMenuInternet"
+SUBCHAVE_COMANDO = r"\shell\open\command"
+
 
 def _nome_do_tir(bruto: str) -> str | None:
     alvo = (bruto or "").strip().lower()
@@ -81,3 +84,60 @@ def preferido(instalados: list[str] | None = None) -> str:
         if nome in instalados:
             return nome
     return instalados[0] if instalados else ""
+
+
+def _versao_do_exe(caminho: str) -> str:
+    """`FileVersion` do executável, pela API do Windows. Vazio se não deu."""
+    try:
+        import ctypes
+        import struct
+        from ctypes import wintypes
+        version = ctypes.WinDLL("version")
+        tamanho = version.GetFileVersionInfoSizeW(caminho, None)
+        if not tamanho:
+            return ""
+        dados = ctypes.create_string_buffer(tamanho)
+        if not version.GetFileVersionInfoW(caminho, 0, tamanho, dados):
+            return ""
+        ponteiro = ctypes.c_void_p()
+        comprimento = wintypes.UINT()
+        if not version.VerQueryValueW(dados, "\\", ctypes.byref(ponteiro),
+                                      ctypes.byref(comprimento)):
+            return ""
+        # VS_FIXEDFILEINFO: dwFileVersionMS/LS nos offsets 8 e 12.
+        bruto = ctypes.string_at(ponteiro.value, comprimento.value)
+        ms, ls = struct.unpack_from("<II", bruto, 8)
+        return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+    except Exception:
+        return ""
+
+
+def detalhar() -> list[dict]:
+    """`[{"nome", "exe", "versao"}]` dos navegadores do registro — para o
+    diagnóstico. A versão é o que decide se o driver serve; sem ela o
+    pacote de suporte não diz nada sobre o navegador (2026-09-18)."""
+    if os.name != "nt":
+        return []
+    import winreg
+
+    achados: list[dict] = []
+    vistos: set[str] = set()
+    for raiz in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(raiz, CHAVE_REGISTRO) as chave:
+                for i in range(winreg.QueryInfoKey(chave)[0]):
+                    try:
+                        bruto = winreg.EnumKey(chave, i)
+                        with winreg.OpenKey(chave, bruto + SUBCHAVE_COMANDO) as cmd:
+                            exe = str(winreg.QueryValue(cmd, None) or "").strip().strip('"')
+                    except OSError:
+                        continue
+                    nome = _nome_do_tir(bruto) or bruto
+                    if exe.lower() in vistos:
+                        continue
+                    vistos.add(exe.lower())
+                    achados.append({"nome": nome, "exe": exe,
+                                    "versao": _versao_do_exe(exe) if exe else ""})
+        except OSError:
+            continue
+    return achados

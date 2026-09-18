@@ -185,6 +185,7 @@ def instalar_gancho_subprocesso() -> None:
 
     init_original = subprocess.Popen.__init__
     wait_original = subprocess.Popen.wait
+    poll_original = subprocess.Popen.poll
 
     @functools.wraps(init_original)
     def _init(self, args, *a, **kw):
@@ -209,5 +210,18 @@ def instalar_gancho_subprocesso() -> None:
             log.debug(f"{_thread()}[PROC] ■ PID {self.pid} saiu com {codigo}{ms}")
         return codigo
 
+    @functools.wraps(poll_original)
+    def _poll(self):
+        # O lançador do TIR é lido linha a linha e vigiado por `poll()`;
+        # sem isto o "■ saiu" dele nunca aparecia (diagnóstico de 2026-09-18).
+        codigo = poll_original(self)
+        if codigo is not None and not getattr(self, "_rastro_fim", False):
+            self._rastro_fim = True
+            inicio = getattr(self, "_rastro_inicio", None)
+            ms = f" ({(time.perf_counter() - inicio) * 1000:.0f} ms)" if inicio else ""
+            log.debug(f"{_thread()}[PROC] ■ PID {self.pid} saiu com {codigo}{ms}")
+        return codigo
+
     subprocess.Popen.__init__ = _init
     subprocess.Popen.wait = _wait
+    subprocess.Popen.poll = _poll

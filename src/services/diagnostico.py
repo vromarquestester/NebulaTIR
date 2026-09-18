@@ -110,7 +110,7 @@ def _arquivos_da_corrida(pasta: Path) -> list[Path]:
         if not sub.is_dir():
             continue
         for p in sub.iterdir():
-            if p.is_file() and p.suffix.lower() in (".log", ".txt", ".png", ".html") \
+            if p.is_file() and p.suffix.lower() in (".log", ".txt", ".png", ".html", ".json") \
                     and p not in achados:
                 achados.append(p)
     return achados
@@ -135,8 +135,17 @@ def coletar_ambiente(versao_app: str, pasta_programa: Path,
         f"venv: {venv_tir.python_do_venv()}  existe={venv_tir.existe()}",
         f"tir_framework: {venv_tir.versao_instalada() or '-'}",
         "",
-        "== Drivers ==",
+        "== Navegadores ==",
     ]
+    try:
+        from services import navegadores
+        for n in navegadores.detalhar():
+            linhas.append(f"  {n['nome']}: {n.get('versao') or '?'}  {n.get('exe', '')}")
+    except Exception as e:
+        linhas.append(f"  (falhou: {e})")
+
+    linhas += ["", "== Drivers (pasta drivers/ = reserva; o Firefox usa o do "
+               "webdriver_manager, ver geckodriver.log da corrida) =="]
     try:
         for d in drivers.listar():
             linhas.append(f"  {d.get('nome', '')}: {d.get('versao') or '-'}")
@@ -210,7 +219,11 @@ def gerar_pacote(destino_zip: Path, *, pasta_programa: Path, pasta_logs: Path,
 
         for arq in arquivos_config:
             if arq and Path(arq).is_file():
-                z.write(arq, f"config/{Path(arq).name}")
+                # A config do TIR importada leva `Password` em claro — sai
+                # mascarada como o config.json da corrida (2026-09-18).
+                z.writestr(f"config/{Path(arq).name}",
+                           mascarar_json(Path(arq).read_text(encoding="utf-8",
+                                                             errors="replace")))
 
         corrida = ultima_corrida(pasta_programa / "tests")
         if corrida is not None:

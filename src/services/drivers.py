@@ -6,13 +6,17 @@ corrida real aqui vieram ChromeDriver 126 com Chrome 148 instalado, e
 geckodriver 0.30.0, de 2021. O sintoma é sempre o mesmo — `session not
 created` no `setUpClass`, e nenhum caso roda.
 
-Solução: uma pasta `drivers/` ao lado do executável, colocada **na frente do
-PATH** do processo do TIR. O Selenium procura o driver no PATH antes de
-qualquer outra coisa, então basta largar um arquivo novo ali para trocar a
-versão — sem mexer no venv, que é recriado a cada atualização do framework.
+Pasta `drivers/` ao lado do executável, colocada na frente do PATH do
+processo do TIR, semeada com o que o TIR traz.
 
-A pasta é semeada com o que o TIR já traz, para nunca ficar vazia. Trocar o
-arquivo é o caminho documentado de atualização.
+⚠ Premissa corrigida em 2026-09-18: o TIR **não** procura o driver no PATH —
+`Start()` passa `executable_path` fixo, o `geckodriver.exe` de dentro do
+pacote, e para o Chrome usa o `webdriver_manager` quando
+`ChromeDriverAutoInstall` está ligado. Esta pasta nunca valeu para o
+Firefox. Quem resolve o geckodriver hoje é o lançador
+(`services/tir/nebula_run.py:_instala_driver_firefox`): webdriver_manager
+primeiro, esta pasta como reserva, o do pacote por último. Ela continua
+existindo por isso — reserva sem rede — e para o diagnóstico.
 """
 
 from __future__ import annotations

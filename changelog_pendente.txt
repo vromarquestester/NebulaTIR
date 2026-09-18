@@ -22,3 +22,5 @@
 #
 # ⚠ Nao empurre linhas novas para a main entre criar a tag e o build terminar:
 # a CI zera o arquivo inteiro, e o que entrou nesse intervalo se perderia.
+- Firefox: o geckodriver passa a ser resolvido como o TIR faz com o ChromeDriver (webdriver_manager, baixado e guardado uma vez), em vez do 0.30.0 de 2021 embutido no TIR; o log do geckodriver vai para a pasta de log da corrida. Se o navegador abrir e o teste nao comecar, o NebulaTIR fecha driver e navegador em vez de deixa-los abertos.
+- Diagnostico: lista navegadores instalados com versao, mascara a senha da configuracao importada e inclui o JSON de erro do TIR.

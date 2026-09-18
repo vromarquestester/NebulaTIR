@@ -104,10 +104,49 @@ def _instala_webapp(config_path: str):
         # A assinatura precisa ser idêntica à do TIR: os testes podem chamar
         # Webapp(config_path=...) por palavra-chave.
         def __init__(self, config_path="", autostart=True):
-            super().__init__(config_path or padrao, autostart)
+            try:
+                super().__init__(config_path or padrao, autostart)
+            except BaseException:
+                # `autostart=True` chama Start() aqui dentro; falhou, o
+                # navegador ficaria aberto para sempre (ver `_encerra_navegador`).
+                _encerra_navegador(self)
+                raise
+
+        def Start(self):          # noqa: N802 — nome do TIR
+            try:
+                return super().Start()
+            except BaseException:
+                _encerra_navegador(self)
+                raise
 
     tir.Webapp = WebappConfigurado
     return True
+
+
+def _encerra_navegador(webapp) -> bool:
+    """Mata driver e navegador de um `Webapp` cujo Start() falhou.
+
+    Quando o Start() falha (2026-09-18 na DESKTOP-QA: "Browsing context has
+    been discarded" ao maximizar), o `log_error` do TIR só chama
+    `driver.close()` — que falha pelo mesmo motivo — e nunca `quit()`. O
+    geckodriver e o Firefox ficam vivos, a janela fica aberta esperando um
+    teste que não vem, e o lançador não termina enquanto eles seguram o
+    pipe. `quit()` derruba os dois pelo próprio driver; se nem isso der,
+    quem chamou o lançador varre os órfãos.
+    """
+    interno = getattr(webapp, "_Webapp__webapp", None)
+    driver = getattr(interno, "driver", None) or getattr(webapp, "driver", None)
+    if driver is None:
+        return False
+    try:
+        driver.quit()
+        print("[nebula_run] Start() falhou: navegador e driver encerrados.",
+              file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"[nebula_run] Start() falhou e o navegador nao fechou: {e}",
+              file=sys.stderr)
+        return False
 
 
 # Prefs aplicadas ao Firefox de cada instância. O Firefox padrão abre vários
@@ -174,6 +213,104 @@ def _instala_prefs_firefox(ativo: bool = True):
                     pass
 
     tir_base.FirefoxOpt = OpcoesEnxutas
+    return True
+
+
+# ── geckodriver ─────────────────────────────────────────────
+#
+# Para o Chrome o TIR resolve o driver na hora (`ChromeDriverAutoInstall` →
+# `webdriver_manager.ChromeDriverManager().install()`), e por isso o Chrome
+# raramente quebra por driver. Para o Firefox não: `Start()` usa um
+# `executable_path` fixo, o `geckodriver.exe` de dentro do pacote — 0.30.0,
+# de 2021 — e ignora o PATH (a pasta `drivers/` do NebulaTIR nunca valeu
+# para o Firefox, ao contrário do que se supôs em 2026-08-14). Aqui o
+# Firefox passa a ter o mesmo tratamento do Chrome: o driver vem do
+# `webdriver_manager` (cache em `~/.wdm`, baixa uma vez), com a pasta
+# `drivers/` e o do pacote como reservas. E o log do geckodriver, que o TIR
+# manda para o `os.devnull`, vai para a pasta de log da corrida.
+
+TEMPO_LIMITE_DRIVER_SEG = 90
+
+
+def _geckodriver_gerenciado() -> str:
+    """Caminho do geckodriver do `webdriver_manager`, ou vazio.
+
+    Roda numa thread com prazo: sem rede (VPN, proxy) o download pode
+    pendurar, e um teste que não começa por causa do driver é pior que um
+    teste com driver velho.
+    """
+    import threading
+    resultado = {}
+
+    def _instala():
+        try:
+            from webdriver_manager.firefox import GeckoDriverManager
+            resultado["caminho"] = GeckoDriverManager().install()
+        except Exception as e:      # rede, proxy, GitHub, disco
+            resultado["erro"] = e
+
+    t = threading.Thread(target=_instala, name="geckodriver", daemon=True)
+    t.start()
+    t.join(TEMPO_LIMITE_DRIVER_SEG)
+    if t.is_alive():
+        print(f"[nebula_run] geckodriver: webdriver_manager passou de "
+              f"{TEMPO_LIMITE_DRIVER_SEG}s; usando a reserva.", file=sys.stderr)
+        return ""
+    if resultado.get("erro"):
+        print(f"[nebula_run] geckodriver: webdriver_manager falhou "
+              f"({resultado['erro']}); usando a reserva.", file=sys.stderr)
+        return ""
+    return resultado.get("caminho", "") or ""
+
+
+def _geckodriver_da_pasta() -> str:
+    """`drivers/geckodriver.exe` ao lado do NebulaTIR, se existir."""
+    for pasta in os.environ.get("PATH", "").split(os.pathsep):
+        candidato = Path(pasta) / "geckodriver.exe"
+        if pasta.lower().endswith("drivers") and candidato.is_file():
+            return str(candidato)
+    return ""
+
+
+def _resolve_geckodriver(padrao: str) -> str:
+    """Ordem: webdriver_manager → `drivers/` do NebulaTIR → o do pacote do TIR."""
+    for origem, caminho in (("webdriver_manager", _geckodriver_gerenciado()),
+                            ("pasta drivers/", _geckodriver_da_pasta()),
+                            ("pacote do TIR", padrao)):
+        if caminho and Path(caminho).is_file():
+            print(f"[nebula_run] geckodriver: {caminho} ({origem})")
+            return caminho
+    return padrao
+
+
+def _instala_driver_firefox(pasta_log: Path | None = None) -> bool:
+    """Troca o `FirefoxService` do TIR por um que resolve o driver e loga."""
+    try:
+        import tir.technologies.core.base as tir_base
+    except ImportError:
+        return False
+    original = getattr(tir_base, "FirefoxService", None)
+    if original is None:
+        print("[nebula_run] AVISO: nao achei FirefoxService no TIR; "
+              "o geckodriver fica o do pacote.", file=sys.stderr)
+        return False
+
+    class ServicoResolvido(original):
+        def __init__(self, executable_path=None, *args, **kwargs):
+            executable_path = _resolve_geckodriver(executable_path or "")
+            # O TIR manda o log para o os.devnull; é justamente o que falta
+            # quando o navegador abre e o teste não começa.
+            if pasta_log is not None:
+                kwargs.pop("log_path", None)
+                kwargs.pop("log_output", None)
+                try:
+                    pasta_log.mkdir(parents=True, exist_ok=True)
+                    kwargs["log_output"] = str(pasta_log / "geckodriver.log")
+                except OSError:
+                    pass
+            super().__init__(executable_path, *args, **kwargs)
+
+    tir_base.FirefoxService = ServicoResolvido
     return True
 
 
@@ -318,6 +455,12 @@ def main() -> int:
     _instala_runner()
     _instala_filtro(set(args.somente or []))
     _instala_webapp(config)
+    # Mesma pasta do log da corrida (LogFolder do config, ou --out).
+    try:
+        pasta_log = tir_report._pasta_saida(args.out)
+    except Exception:
+        pasta_log = None
+    _instala_driver_firefox(pasta_log)
     if _instala_prefs_firefox(args.firefox_enxuto):
         print(f"[nebula_run] Firefox enxuto: {len(PREFS_FIREFOX)} prefs "
               "(1 processo de conteúdo, cache de 32 MB, sem histórico).")
