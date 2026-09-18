@@ -850,3 +850,48 @@ def test_gerar_paralelos_uma_instancia_nao_para_o_pai(api, monkeypatch):
     api.salvar_preferencias({"modo": "paralelo", "max_instancias": 1})
     r = api.gerar_paralelos("PAR_2510")
     assert r["ok"] is True and "precisa_parar" not in r
+
+
+# ── Parar selecionados: o pai que o NebulaTIR subiu vai junto ────────
+
+def _api_com_clone(api, monkeypatch):
+    api.importar_ambiente("PAR_2510")
+    api._instancias.registrar(ambiente="PAR_2510_TIR1", origem="PAR_2510",
+                              slot=1, banco="B1", portas={})
+    monkeypatch.setattr(api._instancias, "parar", lambda alvos: {"ok": True, "paradas": alvos})
+    mortos = []
+    monkeypatch.setattr(api_mod.drivers, "pid_vivo", lambda pid: True)
+    monkeypatch.setattr(api_mod.drivers, "matar_arvore", lambda pid: mortos.append(pid) or True)
+    return mortos
+
+
+def test_parar_ultima_instancia_derruba_appserver_e_dbaccess_do_pai_se_nossos(api, monkeypatch):
+    """2026-09-18: parava o AppServer do pai e deixava o DbAccess dele vivo."""
+    mortos = _api_com_clone(api, monkeypatch)
+    api._principal_e_nosso = True
+    api._pid_principal, api._pid_dbaccess_principal = 111, 222
+    r = api.parar_paralelos(["PAR_2510_TIR1"])
+    assert r["ok"] is True
+    assert sorted(mortos) == [111, 222]
+    assert r["principal"]["parados"] == ["AppServer", "DbAccess"]
+    assert api._pid_principal == 0 and api._pid_dbaccess_principal == 0
+
+
+def test_parar_nao_toca_no_pai_do_gerenciador(api, monkeypatch):
+    """Sem PID nosso (o Gerenciador subiu), o pai é dele: fica de pé."""
+    mortos = _api_com_clone(api, monkeypatch)
+    api._pid_principal, api._pid_dbaccess_principal = 0, 0
+    r = api.parar_paralelos(["PAR_2510_TIR1"])
+    assert r["ok"] is True and mortos == []
+    assert r["principal"]["parados"] == []
+
+
+def test_restaurar_banco_por_origem(api, monkeypatch, tmp_path):
+    """Fontes restaura por padrão; local não (o cadastro só existe no banco
+    do desenvolvedor). As duas chaves são preferências visíveis."""
+    prefs = api.get_preferencias()["preferencias"]
+    assert prefs["restaurar_banco"] is True
+    assert prefs["restaurar_banco_local"] is False
+    r = api.salvar_preferencias({"restaurar_banco_local": True, "restaurar_banco": False})
+    assert r["preferencias"]["restaurar_banco_local"] is True
+    assert r["preferencias"]["restaurar_banco"] is False

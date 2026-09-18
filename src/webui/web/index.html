@@ -295,6 +295,26 @@
               liberar os arquivos da base, e faz isso por nome de imagem. Só use
               com a corrida parada.
             </p>
+            <!-- Restaurar entre rotinas, por origem dos testes (2026-09-18).
+                 Local nasce desligado: o cadastro do teste costuma existir só
+                 no banco do desenvolvedor. -->
+            <div class="campo">
+              <label class="check" for="chk-restaurar-banco">
+                <input type="checkbox" id="chk-restaurar-banco">
+                Restaurar o banco após cada rotina — testes pelos fontes
+              </label>
+            </div>
+            <div class="campo">
+              <label class="check" for="chk-restaurar-banco-local">
+                <input type="checkbox" id="chk-restaurar-banco-local">
+                Restaurar o banco após cada rotina — testes locais
+              </label>
+              <p class="hint">
+                Desligado, a base fica como o teste deixou. Ligado, a base
+                congelada volta depois de cada rotina — e leva junto o que só
+                existe no seu banco.
+              </p>
+            </div>
             <p class="form-error" id="banco-erro" hidden></p>
           </section>
 

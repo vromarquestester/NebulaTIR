@@ -176,6 +176,8 @@ function renderModo() {
   // divisão de casos mudam alguma coisa em sequencial.
   $('#modo-campos').hidden = modo !== 'paralelo';
   $('#chk-dividir-casos').checked = state.preferencias.dividir_casos === true;
+  $('#chk-restaurar-banco').checked = state.preferencias.restaurar_banco !== false;
+  $('#chk-restaurar-banco-local').checked = state.preferencias.restaurar_banco_local === true;
 
   $('#modo-explicacao').textContent = modo === 'paralelo'
     ? 'Cada instância sobe um AppServer próprio, com portas e banco próprios — '
@@ -2101,6 +2103,13 @@ function ligarEventos() {
     const r = await api.salvar_preferencias({ dividir_casos: ev.target.checked });
     if (r.ok) { state.preferencias = r.preferencias; renderModo(); }
   });
+  for (const [sel, chave] of [['#chk-restaurar-banco', 'restaurar_banco'],
+                              ['#chk-restaurar-banco-local', 'restaurar_banco_local']]) {
+    $(sel).addEventListener('change', async ev => {
+      const r = await api.salvar_preferencias({ [chave]: ev.target.checked });
+      if (r.ok) { state.preferencias = r.preferencias; renderModo(); }
+    });
+  }
   $('#max-instancias').addEventListener('change', async ev => {
     const r = await api.salvar_preferencias({ max_instancias: ev.target.value });
     if (r.ok) { state.preferencias = r.preferencias; renderModo(); await renderPortas(); }

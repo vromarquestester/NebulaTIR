@@ -30,6 +30,7 @@ from services import (
     catalogo_testes,
     config_tir,
     dbaccess_ini,
+    drivers,
     execucao,
     inventario,
     limpeza,
@@ -97,6 +98,7 @@ class Api:
         self._window = None
         self._execucao = None       # corrida em andamento, se houver
         self._pid_principal = 0     # AppServer do ambiente principal, se subimos
+        self._pid_dbaccess_principal = 0   # idem para o DbAccess dele
         # O ambiente principal foi subido por NÓS? Só o que subimos é nosso
         # para derrubar. Reiniciar um AppServer que já atendia era o que fazia
         # Gerenciador e NebulaTIR perderem a noção de quem está no ar.
@@ -831,13 +833,20 @@ class Api:
             config_por_ambiente = self._config_por_instancia(
                 config, ambientes_por_slot, literal=local)
 
-        # Restaurar entre rotinas é obrigatório, inclusive em paralelo: sem
-        # isso a instância que liberar primeiro pega a base no estado que o
-        # teste anterior deixou, e o resultado deixa de valer. Isso só passou a
-        # ser possível quando o pipeline do Gerenciador virou escopado por
-        # ambiente — antes ele encerrava `appserver.exe` por nome de imagem e
-        # derrubava as instâncias vizinhas.
-        restaurar_entre_rotinas = True
+        # Restaurar entre rotinas: pelos fontes é o padrão (a instância que
+        # liberar primeiro pega a base no estado que o teste anterior deixou,
+        # e o resultado deixa de valer). Em testes locais o padrão é NÃO
+        # restaurar — o cadastro que o teste usa muitas vezes só existe no
+        # banco do desenvolvedor, e a base congelada o apagaria (decisão do
+        # usuário, 2026-09-18). As duas chaves ficam na tela, no grupo Banco
+        # de dados.
+        restaurar_entre_rotinas = (self._prefs.restaurar_banco_local if local
+                                   else self._prefs.restaurar_banco)
+        if not restaurar_entre_rotinas:
+            self._fila.put({"kind": "log", "level": "INFO",
+                            "text": "Banco NÃO será restaurado entre as rotinas "
+                                    "(preferência para " + ("testes locais" if local
+                                                            else "fontes") + ")."})
 
         self._execucao = execucao.Execucao(
             ambiente=nome, rotinas=rotinas, config=config,
@@ -891,6 +900,9 @@ class Api:
         db = appservers.garantir_dbaccess(exe, banco.get("dbaccess_params", ""),
                                           reiniciar=mudou,
                                           porta=appservers.porta_do_dbaccess(exe))
+        if db.get("subiu") and db.get("pid"):
+            # É nosso: o "Parar" derruba junto com o AppServer do pai.
+            self._pid_dbaccess_principal = int(db["pid"])
         self._fila.put({
             "kind": "log",
             "level": "INFO" if db.get("ok") else "ERROR",
@@ -1403,15 +1415,30 @@ class Api:
 
         restantes = [a for a in self._instancias.nomes() if a not in alvos]
         if not restantes:
-            parou = appservers.parar_dbaccess()
-            resultado["dbaccess_parado"] = parou
-            self._fila.put({
-                "kind": "log", "level": "INFO" if parou else "WARNING",
-                "text": "DbAccess encerrado — nenhuma instância restou."
-                        if parou else
-                        "Não consegui encerrar o DbAccess; verifique à mão.",
-            })
+            # O pai é a instância 1 da corrida. Se foi o NebulaTIR que o subiu
+            # (AppServer e DbAccess, PIDs conhecidos), ele desce junto — o
+            # usuário pediu "parar" e não quer sobra de processo (2026-09-18:
+            # o AppServer parava e o DbAccess do pai ficava). Se quem subiu
+            # foi o Gerenciador, é dele: não se toca.
+            resultado["principal"] = self._parar_principal_se_nosso()
         return resultado
+
+    def _parar_principal_se_nosso(self) -> dict:
+        """Derruba AppServer e DbAccess do pai quando os PIDs são nossos."""
+        parados = []
+        for papel, pid in (("AppServer", self._pid_principal),
+                           ("DbAccess", self._pid_dbaccess_principal)):
+            if pid and drivers.pid_vivo(pid):
+                if drivers.matar_arvore(pid):
+                    parados.append(papel)
+        self._pid_principal = 0
+        self._pid_dbaccess_principal = 0
+        if parados:
+            self._fila.put({"kind": "log", "level": "INFO",
+                            "text": "Ambiente principal encerrado ("
+                                    + " e ".join(parados) + ") — nenhuma "
+                                    "instância restou."})
+        return {"parados": parados}
 
     def excluir_paralelos(self, ambientes: list) -> dict:
         """Remove os ambientes paralelos de verdade, pelo Gerenciador.

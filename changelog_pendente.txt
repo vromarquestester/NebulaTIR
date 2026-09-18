@@ -38,3 +38,5 @@
 - Clones sobem com o Application Monitor desligado ([APP_MONITOR] enable=0): a porta fixa 32033 colidia entre os AppServer.
 - Paralelo: a porta do WebAgent deixa de ser deslocada por instancia. O agente e um so na estacao (21021); o clone apontava para 21022 e o WebApp ficava em "Tentando se conectar ao WebAgent", sem nunca chegar ao login.
 - Paralelo: falha interna numa instancia (ex.: arquivo em uso ao preparar a rotina) e registrada no log e a instancia segue para a proxima unidade, em vez de ficar "aguardando trabalho" para sempre. O preparo da rotina passa a ser um por vez.
+- Parar selecionados: parada a ultima instancia paralela, o ambiente principal que o NebulaTIR subiu (AppServer e DbAccess) desce junto. O que o Gerenciador subiu nao e tocado; nada mais e encerrado por nome de processo.
+- Banco de dados: duas chaves visiveis para restaurar o banco apos cada rotina - testes pelos fontes (ligada) e testes locais (desligada por padrao: o cadastro do teste costuma existir so no banco do desenvolvedor).

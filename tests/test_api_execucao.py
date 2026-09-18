@@ -112,19 +112,24 @@ def _com_instancias(api, nomes):
     return api
 
 
-def test_parar_todas_leva_o_dbaccess_junto(api, monkeypatch):
+def test_parar_todas_leva_o_pai_junto_se_foi_o_nebulatir_que_subiu(api, monkeypatch):
+    """Parada a última instância, o pai (AppServer + DbAccess) desce junto —
+    só quando os PIDs são nossos. `taskkill /IM dbaccess64.exe` saiu: matava
+    o DbAccess do Gerenciador e os isolados das outras instâncias."""
     from webui import api as modulo
 
     _com_instancias(api, ["PAR_2510_TIR1", "PAR_2510_TIR2"])
     monkeypatch.setattr(api._instancias, "parar", lambda alvos: {"ok": True})
-    parou = []
     monkeypatch.setattr(modulo.appservers, "parar_dbaccess",
-                        lambda: parou.append(True) or True)
+                        lambda *a, **k: pytest.fail("matou por nome de imagem"))
+    mortos = []
+    monkeypatch.setattr(modulo.drivers, "pid_vivo", lambda pid: True)
+    monkeypatch.setattr(modulo.drivers, "matar_arvore", lambda pid: mortos.append(pid) or True)
+    api._pid_principal, api._pid_dbaccess_principal = 11, 22
 
     r = api.parar_paralelos(["PAR_2510_TIR1", "PAR_2510_TIR2"])
     assert r["ok"] is True
-    assert r["dbaccess_parado"] is True
-    assert parou == [True]
+    assert sorted(mortos) == [11, 22]
 
 
 def test_parar_uma_so_preserva_o_dbaccess(api, monkeypatch):

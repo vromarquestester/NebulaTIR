@@ -113,6 +113,16 @@ def _filtro_dos_drivers() -> str:
     return " or ".join(f"Name='{nome}'" for nome in EXECUTAVEIS)
 
 
+def pid_vivo(pid: int) -> bool:
+    from services.instancias import _pid_vivo
+    return _pid_vivo(int(pid or 0))
+
+
+def matar_arvore(pid: int) -> bool:
+    """Mata o processo e os filhos. Público para o `Parar` do ambiente principal."""
+    return _matar_arvore(int(pid))
+
+
 def _matar_arvore(pid: int) -> bool:
     try:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],

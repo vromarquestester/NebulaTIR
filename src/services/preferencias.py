@@ -53,6 +53,12 @@ PADRAO = {
     # Voltando para falso, o desenho antigo volta inteiro: DBPort fixo em 7890
     # e um só processo, com os aliases consolidados.
     "dbaccess_por_instancia": True,
+    # Restaurar a base congelada depois de cada rotina. Pelos fontes, ligado:
+    # a próxima rotina precisa da base limpa. Em testes locais, desligado por
+    # padrão (2026-09-18): o cadastro que o teste usa costuma existir só no
+    # banco do desenvolvedor, e a restauração o apagaria.
+    "restaurar_banco": True,
+    "restaurar_banco_local": False,
     # ── atualização automática ──
     # Ligada por padrão. Desligar NÃO impede o "Verificar agora" na interface:
     # desligar o automático não é renunciar a atualizar.
@@ -113,6 +119,8 @@ class Preferencias:
         limpo["dividir_casos"] = _para_bool(limpo.get("dividir_casos"))
         limpo["dbaccess_por_instancia"] = _para_bool(
             limpo.get("dbaccess_por_instancia"))
+        limpo["restaurar_banco"] = _para_bool(limpo.get("restaurar_banco"))
+        limpo["restaurar_banco_local"] = _para_bool(limpo.get("restaurar_banco_local"))
         limpo["atualizacao_automatica"] = _para_bool(
             limpo.get("atualizacao_automatica"))
         limpo["atualizacao_incluir_prerelease"] = _para_bool(
@@ -179,6 +187,14 @@ class Preferencias:
     @property
     def dbaccess_por_instancia(self) -> bool:
         return bool(self._dados["dbaccess_por_instancia"])
+
+    @property
+    def restaurar_banco(self) -> bool:
+        return bool(self._dados["restaurar_banco"])
+
+    @property
+    def restaurar_banco_local(self) -> bool:
+        return bool(self._dados["restaurar_banco_local"])
 
     @property
     def atualizacao_automatica(self) -> bool:
