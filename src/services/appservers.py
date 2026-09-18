@@ -23,7 +23,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from services import appserver_ini, dbaccess_ini
+from services import appserver_ini, dbaccess_ini, webapp
 
 log = logging.getLogger(__name__)
 
@@ -507,6 +507,17 @@ def subir_para_instancias(instancias: list[dict], registro,
                 continue
             if db.get("pid"):
                 registro.anotar_pid(nome, "dbaccess", db["pid"])
+
+        # WebApp da release, por instância: cada clone tem a própria pasta e
+        # o próprio `webapp.dll`. Falha vira aviso — subir com a DLL errada é
+        # ERR0003 no navegador, mas barrar a instância inteira seria pior.
+        dll = webapp.garantir(detalhes.get("webapp"), Path(exe).parent, nome=nome)
+        if dll.get("trocado"):
+            log.info("[WEBAPP] %s: WebApp %s → %s.", nome, dll.get("de") or "embutido",
+                     dll.get("alvo"))
+        if dll.get("aviso"):
+            avisos.append(f"WebApp: {dll['aviso']}")
+            log.warning("[WEBAPP] %s", dll["aviso"])
 
         resultado = subir(exe, banco.get("appserver_params", ""))
         if not resultado.get("ok"):

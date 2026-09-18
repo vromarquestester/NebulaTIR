@@ -900,7 +900,10 @@ class Api:
         banco = (detalhes.get("banco") or {}) if detalhes.get("ok") else {}
         porta = str(banco.get("port") or "").strip()
 
-        if porta and appservers.porta_responde(int(porta)):
+        no_ar = bool(porta) and appservers.porta_responde(int(porta))
+        # WebApp da release antes de subir; no ar, só confere e avisa.
+        self._garantir_webapp(nome, detalhes, no_ar=no_ar)
+        if no_ar:
             self._fila.put({"kind": "log", "level": "INFO",
                             "text": f"{nome} já responde na porta {porta}."})
             return {"ok": True, "reaproveitado": True}
@@ -920,6 +923,30 @@ class Api:
         self._fila.put({"kind": "log", "level": "INFO",
                         "text": f"{nome} no ar na porta {porta}."})
         return {"ok": True}
+
+    def _garantir_webapp(self, nome: str, detalhes: dict, no_ar: bool = False) -> dict:
+        """`webapp.dll` da release na pasta do AppServer deste ambiente.
+
+        Alvo e URL vêm do bloco `webapp` do detalhe (canal); a troca roda
+        aqui. Nunca derruba a corrida: falha e "já no ar com a DLL errada"
+        viram aviso no log.
+        """
+        from services import webapp
+
+        banco = (detalhes.get("banco") or {}) if detalhes.get("ok") else {}
+        exe = banco.get("appserver_exe", "")
+        if not exe:
+            return {"ok": True, "conferido": False}
+        dll = webapp.garantir(detalhes.get("webapp"), Path(exe).parent,
+                              no_ar=no_ar, nome=nome)
+        if dll.get("trocado"):
+            self._fila.put({"kind": "log", "level": "INFO",
+                            "text": f"{nome}: WebApp {dll.get('de') or 'embutido'} → "
+                                    f"{dll.get('alvo')} (a release exige)."})
+        if dll.get("aviso"):
+            self._fila.put({"kind": "log", "level": "WARNING",
+                            "text": f"WebApp: {dll['aviso']}"})
+        return dll
 
     def _religar_ambiente(self, ambiente: str) -> dict:
         """Sobe de novo DbAccess e AppServer de um ambiente, e espera a porta.

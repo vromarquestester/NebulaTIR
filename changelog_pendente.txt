@@ -27,3 +27,4 @@
 - Executar com o ambiente ja parado no Gerenciador nao mostra mais o aviso "Nao consegui parar".
 - Botao Diagnostico no painel de log: gera um .zip ao lado do programa com logs, debug, configuracao, ultima corrida (senha mascarada) e print da janela, e abre no Explorer para anexar ao suporte.
 - Novo logs/debug-AAAAMMDD.log com o rastro completo: cada clique e campo da tela, cada chamada com argumentos e tempo, cada processo aberto com PID e codigo de saida. O log da tela nao muda; guardado por 14 dias.
+- WebApp da release por conta do NebulaTIR: antes de subir cada AppServer (principal ou instancia paralela) confere o webapp.dll e, na 2610, baixa e instala o da familia 26 sozinho. Precisa do Gerenciador que expoe o bloco webapp no canal; ambiente ja no ar com a DLL errada so recebe aviso.
