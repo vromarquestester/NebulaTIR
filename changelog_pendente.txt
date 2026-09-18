@@ -32,3 +32,7 @@
 - Testes locais rodam em paralelo e dividem casos como o catalogo. O config.json da pasta continua mandando, mas URL (por instancia) e Sem tela vem da configuracao do ambiente - antes o Sem tela era ignorado e o Firefox aparecia.
 - Com a origem Testes locais, o botao Configuracao edita o config.json da pasta (URL e Sem tela ficam no ambiente).
 - Log com abas por ambiente: Geral mais uma aba por instancia da corrida; aba fora de vista ganha um ponto quando recebe aviso ou erro.
+- Paralelo: o DbAccess do ambiente principal passa a ser conferido pela porta (7890), nao pelo nome do processo. Com DbAccess isolado por instancia, o do clone enganava a checagem e o principal subia sem banco (login pendurado). O principal agora sobe antes dos clones.
+- Cada instancia paralela grava o log do TIR na propria pasta (log\<instancia>); antes dois lancadores escreviam no mesmo arquivo. O que o lancador imprime tambem vai para o debug-*.log.
+- Antes de executar, o log informa a memoria livre e quantas instancias cabem com folga (so aviso).
+- Clones sobem com o Application Monitor desligado ([APP_MONITOR] enable=0): a porta fixa 32033 colidia entre os AppServer.

@@ -142,7 +142,13 @@ def preparar_rotina(ambiente: str, rotina: dict, config: dict,
         return {"ok": False, "erro": f"TESTCASE não encontrado: {case}"}
 
     destino = pasta_da_rotina(ambiente, nome)
+    # Fatia paralela grava em `log\<instância>`: dois lançadores iniciados no
+    # mesmo milissegundo escreviam no MESMO `TIR_<suite>_<carimbo>.log`,
+    # intercalados (corrida das 14:12 de 2026-09-18) — impossível saber o que
+    # a segunda instância fez. O relatório unificado continua em `log\`.
     pasta_log = destino / NOME_LOG
+    if instancia:
+        pasta_log = pasta_log / instancia
     pasta_log.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(suite, destino / suite.name)

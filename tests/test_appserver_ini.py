@@ -312,3 +312,17 @@ def test_sufixo_vazio_e_recusado(tmp_path):
     ini = tmp_path / "appserver.ini"
     ini.write_text("[environment]\nSpecialKey=PAR25xx\n", encoding="latin-1")
     assert appserver_ini.aplicar_specialkey(ini, "")["ok"] is False
+
+
+def test_desliga_o_app_monitor_criando_a_secao(tmp_path):
+    """O Application Monitor sobe na 32033 mesmo sem a seção no .ini; o
+    segundo AppServer falha o bind (console do PAR_2510, 2026-09-18)."""
+    ini = tmp_path / "appserver.ini"
+    ini.write_text("[WEBAPP]\nport=4322\n", encoding="latin-1")
+    assert appserver_ini.desativar_appmonitor(ini)["ok"] is True
+    texto = ini.read_text(encoding="latin-1")
+    assert "[APP_MONITOR]" in texto and "ENABLE=0" in texto
+    assert "port=4322" in texto
+    # Idempotente: rodar de novo não duplica.
+    appserver_ini.desativar_appmonitor(ini)
+    assert ini.read_text(encoding="latin-1").count("[APP_MONITOR]") == 1

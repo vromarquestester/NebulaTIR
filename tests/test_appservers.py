@@ -167,16 +167,49 @@ def test_falha_ao_escrever_o_ini_impede_a_subida(tmp_path, monkeypatch):
 def test_dbaccess_ja_no_ar_nao_e_tocado(monkeypatch):
     """Um DbAccess atende todos os bancos; subir outro mataria as instâncias
     que já estão rodando."""
-    monkeypatch.setattr(appservers, "dbaccess_no_ar", lambda: True)
+    monkeypatch.setattr(appservers, "dbaccess_no_ar", lambda porta=0: True)
     monkeypatch.setattr(appservers.subprocess, "Popen",
                         lambda *a, **k: pytest.fail("subiu um segundo DbAccess"))
     r = appservers.garantir_dbaccess("qualquer.exe")
     assert r["ok"] is True
     assert r["subiu"] is False
+    assert r["porta"] == 7890
+
+
+def test_dbaccess_e_decidido_pela_porta_nao_pelo_nome(tmp_path, monkeypatch):
+    """Corrida das 14:12 de 2026-09-18: o DbAccess isolado do clone (7891)
+    estava vivo, o `tasklist` achava `dbaccess64.exe` e o pai ficava sem o
+    seu na 7890 — `Falha ao conectar no DbAccess`. Agora é a porta que diz."""
+    exe = tmp_path / "dbaccess64.exe"
+    exe.write_bytes(b"")
+    (tmp_path / "dbaccess.ini").write_text("[General]" + chr(10) + "Port=7890" + chr(10), encoding="latin-1")
+    respondem = {7891}
+    monkeypatch.setattr(appservers, "porta_responde",
+                        lambda porta, host="127.0.0.1", timeout=1.0: porta in respondem)
+    monkeypatch.setattr(appservers, "INTERVALO_SONDA_SEG", 0)
+
+    class ProcFalso:
+        pid = 77
+        def poll(self):
+            return None
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("duble", timeout)
+
+    def _popen(cmd, **k):
+        respondem.add(7890)       # subiu: a porta passa a responder
+        return ProcFalso()
+    monkeypatch.setattr(appservers.subprocess, "Popen", _popen)
+    monkeypatch.setattr(appservers.time, "sleep", lambda s: None)
+    # Nunca consulta o tasklist: a decisão é pela porta.
+    monkeypatch.setattr(appservers.subprocess, "run",
+                        lambda *a, **k: pytest.fail("consultou o tasklist"))
+
+    r = appservers.garantir_dbaccess(str(exe))
+    assert r["ok"] is True and r["subiu"] is True and r["porta"] == 7890
 
 
 def test_dbaccess_inexistente_avisa(monkeypatch, tmp_path):
-    monkeypatch.setattr(appservers, "dbaccess_no_ar", lambda: False)
+    monkeypatch.setattr(appservers, "dbaccess_no_ar", lambda porta=0: False)
     r = appservers.garantir_dbaccess(str(tmp_path / "nao-existe.exe"))
     assert r["ok"] is False
     assert "não encontrado" in r["erro"]
@@ -285,10 +318,11 @@ def test_dbaccess_sobe_com_console(tmp_path, monkeypatch):
             # Popen real, que levanta TimeoutExpired em vez de devolver.
             raise subprocess.TimeoutExpired("duble", timeout)
 
-    monkeypatch.setattr(appservers, "dbaccess_no_ar", lambda: False)
+    monkeypatch.setattr(appservers, "dbaccess_no_ar", lambda porta=0: False)
     monkeypatch.setattr(appservers.subprocess, "Popen",
                         lambda cmd, **k: chamadas.append((cmd, k)) or ProcFalso())
     monkeypatch.setattr(appservers.time, "sleep", lambda s: None)
+    monkeypatch.setattr(appservers, "esperar_porta", lambda porta, **k: {"ok": True})
 
     assert appservers.garantir_dbaccess(str(exe))["ok"] is True
     cmd, kwargs = chamadas[0]

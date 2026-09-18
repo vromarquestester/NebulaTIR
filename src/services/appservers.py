@@ -259,7 +259,29 @@ def subir(appserver_exe: str, params: str = "") -> dict:
 NOME_DBACCESS = "dbaccess64.exe"
 
 
-def dbaccess_no_ar() -> bool:
+PORTA_DBACCESS_PADRAO = 7890
+ESPERA_DBACCESS_SEG = 30
+
+
+def porta_do_dbaccess(dbaccess_exe: str) -> int:
+    """Porta do `dbaccess.ini` ao lado do exe; 7890 quando não há chave."""
+    from services import dbaccess_ini
+    return dbaccess_ini.ler_porta(dbaccess_ini.caminho_do_ini(dbaccess_exe)) \
+        or PORTA_DBACCESS_PADRAO
+
+
+def dbaccess_no_ar(porta: int = 0) -> bool:
+    """O DbAccess **desta porta** responde?
+
+    Por porta, não por nome de processo. A corrida das 14:12 de 2026-09-18
+    provou o defeito: com DbAccess isolado por instância, o do clone (7891)
+    sobe antes do pai; o `tasklist` achava um `dbaccess64.exe` qualquer,
+    dizia "já estava no ar", e o pai subia sem o seu na 7890 — `Falha ao
+    conectar no DbAccess` no console e login pendurado. Sem porta (chamada
+    antiga) cai no nome do processo.
+    """
+    if porta:
+        return porta_responde(int(porta), timeout=1.0)
     try:
         saida = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {NOME_DBACCESS}",
                                 "/NH"], capture_output=True, text=True, timeout=15,
@@ -269,40 +291,52 @@ def dbaccess_no_ar() -> bool:
     return NOME_DBACCESS.casefold() in (saida or "").casefold()
 
 
-def parar_dbaccess() -> bool:
-    """Encerra o DbAccess em execução. Só para trocar o `.ini` dele."""
+def parar_dbaccess(porta: int = 0) -> bool:
+    """Encerra o DbAccess. Só para trocar o `.ini` dele.
+
+    Com porta, mata **só o dono daquela porta** — matar por nome de imagem
+    levaria os DbAccess isolados das instâncias junto. Sem porta, o
+    comportamento antigo.
+    """
     try:
-        subprocess.run(["taskkill", "/F", "/IM", NOME_DBACCESS],
-                       capture_output=True, timeout=30,
-                       creationflags=_SEM_JANELA)
+        pid = pid_escutando(int(porta)) if porta else 0
+        if porta and not pid:
+            return True
+        alvo = ["/PID", str(pid)] if pid else ["/IM", NOME_DBACCESS]
+        subprocess.run(["taskkill", "/F", *alvo], capture_output=True,
+                       timeout=30, creationflags=_SEM_JANELA)
     except (OSError, subprocess.SubprocessError):
         return False
     for _ in range(10):
-        if not dbaccess_no_ar():
+        if not dbaccess_no_ar(porta):
             return True
         time.sleep(1)
     return False
 
 
 def garantir_dbaccess(dbaccess_exe: str, params: str = "",
-                      reiniciar: bool = False) -> dict:
-    """Sobe o DbAccess se não houver nenhum. **Nunca mata o que está no ar.**
+                      reiniciar: bool = False, porta: int = 0) -> dict:
+    """Sobe o DbAccess da porta deste ambiente se ela não responder.
+    **Nunca mata o que está no ar** (salvo `reiniciar`, e só o desta porta).
 
-    Um DbAccess atende todos os bancos (o `dbaccess.ini` indexa por alias), e
+    Um DbAccess atende todos os bancos do `dbaccess.ini` dele, e
     `subir_dbaccess` do Gerenciador mata o existente antes de subir o dele —
     aqui isso derrubaria as instâncias já rodando.
 
-    Necessário porque parar o ambiente principal antes da corrida leva o
-    DbAccess dele junto, e sem ele o AppServer sobe mas não serve ninguém.
+    `porta` vem do `dbaccess.ini` ao lado do exe quando não informada. Depois
+    de subir, espera a porta responder: o AppServer que vier em seguida
+    tenta 1+2+4+8+16 s e desiste — era o que atrasava o WebApp em 60 s.
     """
-    if dbaccess_no_ar():
+    porta = int(porta or porta_do_dbaccess(dbaccess_exe))
+    if dbaccess_no_ar(porta):
         if not reiniciar:
-            return {"ok": True, "subiu": False, "motivo": "já estava no ar"}
+            return {"ok": True, "subiu": False, "porta": porta,
+                    "motivo": f"já estava no ar (porta {porta})"}
         # O DbAccess lê o `dbaccess.ini` na partida: alias novo só vale depois
         # de reiniciar. Feito ANTES de subir qualquer AppServer, para não
         # derrubar instância nenhuma.
-        log.info("[DBACCESS] Reiniciando para carregar os aliases novos…")
-        parar_dbaccess()
+        log.info("[DBACCESS] Reiniciando o da porta %s para carregar os aliases novos…", porta)
+        parar_dbaccess(porta)
 
     exe = Path(dbaccess_exe or "")
     if not exe.is_file():
@@ -317,8 +351,13 @@ def garantir_dbaccess(dbaccess_exe: str, params: str = "",
         return {"ok": False,
                 "erro": f"O DbAccess encerrou logo após subir "
                         f"(código {proc.returncode})."}
-    log.info("[DBACCESS] No ar (PID %d).", proc.pid)
-    return {"ok": True, "subiu": True, "pid": proc.pid}
+    pronta = esperar_porta(porta, limite_seg=ESPERA_DBACCESS_SEG)
+    if not pronta.get("ok"):
+        return {"ok": False, "pid": proc.pid,
+                "erro": f"O DbAccess subiu (PID {proc.pid}) mas a porta {porta} "
+                        f"não respondeu em {ESPERA_DBACCESS_SEG}s."}
+    log.info("[DBACCESS] No ar na porta %s (PID %d).", porta, proc.pid)
+    return {"ok": True, "subiu": True, "pid": proc.pid, "porta": porta}
 
 
 def subir_dbaccess_da_instancia(dbaccess_exe: str, porta: int,
@@ -481,6 +520,7 @@ def subir_para_instancias(instancias: list[dict], registro,
         # portas: com vários clones, os seguintes falham com `error 10048`. O
         # TIR fala com o WebApp, não com o monitor.
         appserver_ini.desativar_webmonitor(ini_app)
+        appserver_ini.desativar_appmonitor(ini_app)
 
         # Identidade do ambiente para o semáforo e para o controle de RPO. O
         # clone herda a `SpecialKey` do original, e com ela igual o Protheus

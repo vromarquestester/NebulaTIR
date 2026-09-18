@@ -151,3 +151,20 @@ def test_limpar_remove_so_o_ambiente_pedido(programa, rotina):
     preparacao.limpar_ambiente("AMB1")
     assert not (programa / "tests" / "AMB1").exists()
     assert (programa / "tests" / "AMB2").is_dir()
+
+
+def test_fatia_paralela_grava_o_log_na_pasta_da_instancia(programa, rotina):
+    """Dois lançadores no mesmo milissegundo escreviam no MESMO arquivo do
+    TIR, intercalados (corrida das 14:12 de 2026-09-18). Cada instância
+    ganha `log\<instância>`; o sequencial continua em `log\`."""
+    config = config_tir.padrao_para(url="http://127.0.0.1:4322/",
+                                    ambiente_ini="environment", navegador="Chrome")
+    r = preparacao.preparar_rotina("PAR_2510", rotina, config, instancia="PAR_2510_TIR1")
+    assert r["ok"], r
+    assert r["log"].endswith(str(Path("log") / "PAR_2510_TIR1"))
+    gravado = json.loads(Path(r["config"]).read_text(encoding="utf-8"))
+    assert gravado["LogFolder"] == r["log"]
+    assert Path(r["config"]).name == "config.PAR_2510_TIR1.json"
+
+    seq = preparacao.preparar_rotina("PAR_2510", rotina, config)
+    assert seq["log"].endswith("log") and not seq["log"].endswith("PAR_2510_TIR1")

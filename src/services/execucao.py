@@ -22,7 +22,7 @@ import threading
 import time
 from pathlib import Path
 
-from services import drivers, preparacao, venv_tir
+from services import drivers, preparacao, rastro, venv_tir
 
 log = logging.getLogger(__name__)
 
@@ -234,6 +234,10 @@ class Execucao:
         if ambiente:
             evento["ambiente"] = ambiente
         self._eventos.put(evento)
+        # Espelho no debug-*.log: a tela some ao fechar, e o diagnóstico de
+        # 2026-09-18 não tinha o que o lançador disse (só o `[PROC] ▶`).
+        rastro.log.debug("[CORRIDA] %s%s %s", f"{ambiente} | " if ambiente else "",
+                         nivel if nivel != "INFO" else "", texto)
 
     # ── árvore de acompanhamento ──
     def _slot_assume(self, slot: int, rotina: str, casos: list) -> None:
@@ -389,6 +393,8 @@ class Execucao:
 
         pasta_log = Path(preparo["log"])
         if dividida:
+            # As fatias gravaram em `log\<instância>`; o unificado vai na raiz.
+            pasta_log = pasta / preparacao.NOME_LOG
             self._juntar_relatorio(nome, pasta, pasta_log)
 
         estado_final = OK if not self._situacao[nome].get("mensagem") else FALHOU

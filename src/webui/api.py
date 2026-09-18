@@ -37,6 +37,7 @@ from services import (
     portas,
     preparacao,
     rastro,
+    recursos_maquina,
     testes_locais,
 )
 from services import atualizacao as _atualizacao
@@ -743,6 +744,16 @@ class Api:
         if not ambiente_python.get("ok"):
             return ambiente_python
 
+        # Memória: a corrida das 14:12 de 2026-09-18 rodou com 90 % em uso e
+        # as duas instâncias pararam no login. Só avisa (decisão do usuário):
+        # o teto sugerido é informação, não trava.
+        instancias_pedidas = self._prefs.max_instancias if self._prefs.paralelo else 1
+        memoria = recursos_maquina.avaliar_memoria(instancias_pedidas)
+        if memoria.get("texto"):
+            self._fila.put({"kind": "log",
+                            "level": "WARNING" if memoria.get("apertada") else "INFO",
+                            "text": memoria["texto"]})
+
         if local:
             # Regra de 2026-09-18: o `config.json` da pasta manda, e o
             # ambiente sobrescreve só o que é da execução — `Url` (por
@@ -877,7 +888,8 @@ class Api:
                 })
 
         db = appservers.garantir_dbaccess(exe, banco.get("dbaccess_params", ""),
-                                          reiniciar=mudou)
+                                          reiniciar=mudou,
+                                          porta=appservers.porta_do_dbaccess(exe))
         self._fila.put({
             "kind": "log",
             "level": "INFO" if db.get("ok") else "ERROR",
@@ -1068,6 +1080,19 @@ class Api:
                                     + ", ".join(ausentes)
                                     + ". Sem isso o login trava na tela inicial."}
 
+        # O PAI primeiro: é o dono da 7890 e do plano de portas. Com os
+        # clones na frente, o DbAccess isolado deles subia antes e o pai
+        # ficava sem o seu (corrida das 14:12 de 2026-09-18). Sem o pai a
+        # corrida continua com os clones, dizendo isso em voz alta.
+        principal = self._subir_principal(nome)
+        if not principal.get("ok"):
+            self._fila.put({
+                "kind": "log", "level": "WARNING",
+                "text": f"ATENÇÃO: {nome} (ambiente principal) não subiu — "
+                        f"{principal.get('erro', '')}. A corrida segue só com "
+                        f"as instâncias paralelas.",
+            })
+
         self._fila.put({"kind": "log", "level": "INFO",
                         "text": "[FASE] Subindo as instâncias paralelas "
                                 "(a porta leva algum tempo para responder)"})
@@ -1085,24 +1110,9 @@ class Api:
                     "erro": "Nenhuma instância paralela subiu. Veja o log."}
 
         ambientes = [s["ambiente"] for s in subida["subidos"]]
-
-        # O pai entra como PRIMEIRA instância. Ele foi parado logo antes, junto
-        # com o AppServer do Gerenciador, então precisa subir de novo — pelo
-        # NebulaTIR desta vez, que é quem sabe o PID e consegue derrubá-lo
-        # depois sem tocar nas outras instâncias.
-        principal = self._subir_principal(nome)
+        # O pai entra como PRIMEIRA instância (subiu acima).
         if principal.get("ok"):
             ambientes.insert(0, nome)
-        else:
-            # Sem o pai a corrida continua — com uma instância a menos, e
-            # dizendo isso em voz alta. Derrubar tudo porque o ambiente
-            # original não subiu seria pior: os clones estão prontos.
-            self._fila.put({
-                "kind": "log", "level": "WARNING",
-                "text": f"ATENÇÃO: {nome} (ambiente principal) não subiu — "
-                        f"{principal.get('erro', '')}. A corrida segue só com "
-                        f"as instâncias paralelas.",
-            })
 
         self._fila.put({"kind": "log", "level": "INFO",
                         "text": f"{len(ambientes)} instância(s) no ar: "

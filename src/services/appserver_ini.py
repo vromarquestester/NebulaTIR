@@ -197,6 +197,7 @@ def ler_specialkey(ini_path: Path) -> str:
 
 
 SECAO_WEBMONITOR = "WEBMONITOR"
+SECAO_APPMONITOR = "APP_MONITOR"
 CHAVE_ENABLE = "ENABLE"
 
 
@@ -214,6 +215,28 @@ def desativar_webmonitor(ini_path: Path) -> dict:
     Vale só para os clones do NebulaTIR. O ambiente que o usuário abre à mão
     pelo Gerenciador continua com o monitor.
     """
+    return _desligar_secao(ini_path, SECAO_WEBMONITOR, "WebMonitor desligado",
+                           "porta fixa colide entre clones")
+
+
+def desativar_appmonitor(ini_path: Path) -> dict:
+    """Escreve `enable=0` em `[APP_MONITOR]` do clone.
+
+    O Application Monitor sobe em todo AppServer numa porta **fixa**, 32033
+    (TDN, "Application Server - Serviço de monitoramento": `[APP_MONITOR]
+    enable=1` ativa "por padrão na porta 32033"). Nesta release ele sobe
+    mesmo sem a seção no `.ini`; o segundo AppServer da máquina falha com
+    `error 10048 ... bind port 32033` e cai numa porta aleatória (visto no
+    console do PAR_2510 em 2026-09-18 14:13). Não derruba nada, mas quem
+    subir primeiro leva a porta, e o console enche de ERROR. O TIR não usa
+    o monitor. `enable=0` é o inverso do documentado — se a chave for
+    ignorada, o comportamento é o de hoje.
+    """
+    return _desligar_secao(ini_path, SECAO_APPMONITOR, "Application Monitor desligado",
+                           "porta fixa 32033 colide entre clones")
+
+
+def _desligar_secao(ini_path: Path, secao: str, rotulo: str, motivo: str) -> dict:
     ini_path = Path(ini_path)
     if not ini_path.is_file():
         return {"ok": False, "erro": f"appserver.ini não encontrado: {ini_path}"}
@@ -223,7 +246,7 @@ def desativar_webmonitor(ini_path: Path) -> dict:
     except OSError as e:
         return {"ok": False, "erro": f"Não consegui ler o {ini_path.name}: {e}"}
 
-    alvo = SECAO_WEBMONITOR.casefold()
+    alvo = secao.casefold()
     atual, escrito, fim_da_secao = None, False, None
     for i, linha in enumerate(linhas):
         nova = _secao(linha)
@@ -247,13 +270,12 @@ def desativar_webmonitor(ini_path: Path) -> dict:
             # é descartável — não é o `.ini` que o usuário mantém à mão.
             if linhas and not linhas[-1].endswith(("\n", "\r\n")):
                 linhas.append("\n")
-            linhas.append(f"\n[{SECAO_WEBMONITOR}]\n{CHAVE_ENABLE}=0\n")
+            linhas.append(f"\n[{secao}]\n{CHAVE_ENABLE}=0\n")
         else:
             linhas.insert(fim_da_secao, f"{CHAVE_ENABLE}=0\n")
 
     ini_path.write_text("".join(linhas), encoding="latin-1")
-    log.info("[INI] %s: WebMonitor desligado (porta fixa colide entre clones).",
-             ini_path.parent.name)
+    log.info("[INI] %s: %s (%s).", ini_path.parent.name, rotulo, motivo)
     return {"ok": True, "arquivo": str(ini_path)}
 
 
