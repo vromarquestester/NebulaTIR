@@ -1098,6 +1098,7 @@ function pintarModalUpdate(extra) {
 
   const itens = u.changelog || [];
   $('#upd-changelog-box').hidden = itens.length === 0;
+  $('#upd-changelog-vazio').hidden = !$('#upd-changelog-box').hidden;
   $('#upd-changelog').innerHTML = '';
   itens.forEach(txt => {
     const li = document.createElement('li');

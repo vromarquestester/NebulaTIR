@@ -643,9 +643,11 @@
 
   <!-- ───────────── Modal: atualização do programa ───────────── -->
   <div class="overlay" id="overlay-atualizacao" hidden>
-    <!-- Largura padrão do modal, não a estreita: pasta e vitrine da aba Sobre
-         são caminhos longos, e a 520px o valor invadia o rótulo. -->
-    <div class="modal" role="dialog" aria-modal="true"
+    <!-- Mais largo que o padrão (760px): a aba Atualização é lida em duas
+         colunas — estado e controles à esquerda, "O que mudou" e "Outras
+         ferramentas" à direita — em vez de uma pilha comprida. Pedido do
+         usuário em 2026-09-18; pasta e vitrine da aba Sobre também cabem. -->
+    <div class="modal modal-config" role="dialog" aria-modal="true"
          aria-labelledby="tit-modal-upd">
       <div class="modal-head">
         <h2 id="tit-modal-upd">Configurações</h2>
@@ -660,48 +662,57 @@
                   aria-selected="false" aria-controls="painel-cfg-sobre" tabindex="-1">Sobre</button>
         </div>
 
-        <div id="painel-cfg-atualizacao" role="tabpanel" aria-labelledby="aba-cfg-atualizacao">
-        <p class="upd-linha">
-          <span>Versão instalada</span>
-          <strong id="upd-versao-atual" data-numeric>—</strong>
-        </p>
-        <p class="upd-linha" id="upd-linha-nova" hidden>
-          <span>Versão publicada</span>
-          <strong id="upd-versao-nova" data-numeric>—</strong>
-        </p>
+        <div id="painel-cfg-atualizacao" class="upd-grade" role="tabpanel" aria-labelledby="aba-cfg-atualizacao">
+        <div class="upd-coluna">
+          <h3 class="upd-sub">Versão</h3>
+          <p class="upd-linha">
+            <span>Versão instalada</span>
+            <strong id="upd-versao-atual" data-numeric>—</strong>
+          </p>
+          <p class="upd-linha" id="upd-linha-nova" hidden>
+            <span>Versão publicada</span>
+            <strong id="upd-versao-nova" data-numeric>—</strong>
+          </p>
 
-        <p class="hint" id="upd-mensagem" aria-live="polite">—</p>
+          <p class="hint" id="upd-mensagem" aria-live="polite">—</p>
 
-        <div id="upd-progresso" hidden>
-          <div class="upd-trilho"><span id="upd-barra" style="width:0%"></span></div>
+          <div id="upd-progresso" hidden>
+            <div class="upd-trilho"><span id="upd-barra" style="width:0%"></span></div>
+          </div>
+
+          <h3 class="upd-sub">Automático</h3>
+          <label class="check-inline">
+            <input type="checkbox" id="chk-upd-auto">
+            <span>Baixar atualizações automaticamente</span>
+          </label>
+          <!-- Desligar o automático não é renunciar a atualizar: o botão
+               "Verificar agora" continua valendo. -->
+          <p class="hint">
+            Com isto desligado, nada é baixado sozinho — mas você ainda pode
+            verificar a qualquer momento. A troca acontece ao reiniciar o
+            programa, com ele fechado. Ligado, o programa verifica ao abrir e
+            a cada 5 minutos, e também deixa pronta a atualização das outras
+            ferramentas da mesma pasta.
+          </p>
         </div>
 
-        <div id="upd-changelog-box" hidden>
+        <div class="upd-coluna">
           <h3 class="upd-sub">O que mudou</h3>
-          <ul class="upd-changelog" id="upd-changelog"></ul>
-        </div>
+          <div id="upd-changelog-box" hidden>
+            <ul class="upd-changelog" id="upd-changelog"></ul>
+          </div>
+          <p class="hint" id="upd-changelog-vazio">
+            Sem versão nova publicada: nada a listar.
+          </p>
 
-        <!-- As outras ferramentas da mesma pasta. Quem verifica, verifica para
-             todas: o que estiver desatualizado é baixado em espera e entra
-             quando aquele programa abrir. -->
-        <div id="upd-familia-box" hidden>
-          <h3 class="upd-sub">Outras ferramentas</h3>
-          <ul class="upd-familia" id="upd-familia"></ul>
+          <!-- As outras ferramentas da mesma pasta. Quem verifica, verifica para
+               todas: o que estiver desatualizado é baixado em espera e entra
+               quando aquele programa abrir. -->
+          <div id="upd-familia-box" hidden>
+            <h3 class="upd-sub">Outras ferramentas</h3>
+            <ul class="upd-familia" id="upd-familia"></ul>
+          </div>
         </div>
-
-        <label class="check-inline">
-          <input type="checkbox" id="chk-upd-auto">
-          <span>Baixar atualizações automaticamente</span>
-        </label>
-        <!-- Desligar o automático não é renunciar a atualizar: o botão
-             "Verificar agora" continua valendo. -->
-        <p class="hint">
-          Com isto desligado, nada é baixado sozinho — mas você ainda pode
-          verificar a qualquer momento. A troca acontece ao reiniciar o
-          programa, com ele fechado. Ligado, o programa verifica ao abrir e
-          a cada 5 minutos, e também deixa pronta a atualização das outras
-          ferramentas da mesma pasta.
-        </p>
         </div>
 
         <div id="painel-cfg-sobre" class="sobre-linhas" role="tabpanel" aria-labelledby="aba-cfg-sobre" hidden>
