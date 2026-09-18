@@ -1108,7 +1108,6 @@ function pintarModalUpdate(extra) {
   pintarFamiliaUpdate(u.familia || []);
 
   $('#chk-upd-auto').checked = u.automatica !== false;
-  $('#chk-upd-prerelease').checked = u.incluir_prerelease === true;
   $('#sobre-versao').textContent = u.versao_atual || '—';
   $('#sobre-pasta').textContent = u.pasta || '—';
   $('#sobre-vitrine').textContent = u.vitrine || '—';
@@ -1936,10 +1935,6 @@ function ligarEventos() {
 
   $('#chk-upd-auto').addEventListener('change', async (ev) => {
     await api.atualizacao_configurar(ev.target.checked, null);
-    await atualizarUpdate();
-  });
-  $('#chk-upd-prerelease').addEventListener('change', async (ev) => {
-    await api.atualizacao_configurar(null, ev.target.checked);
     await atualizarUpdate();
   });
 

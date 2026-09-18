@@ -433,14 +433,16 @@ def test_atualizacao_tem_caminho_permanente_e_reinicio():
     assert "api.fechar_janela(true)" in JS
 
 
-def test_configuracoes_tem_abas_atualizacao_e_sobre_e_prerelease():
+def test_configuracoes_tem_abas_atualizacao_e_sobre():
     """O botão fixo virou "Configurações", como no Gerenciador: verificar,
-    ligar/desligar o automático, aceitar pré-lançamento e voltar versão num
-    lugar só, mais a aba Sobre com pasta e vitrine."""
+    ligar/desligar o automático e voltar versão num lugar só, mais a aba
+    Sobre com pasta e vitrine. A chave "Aceitar pré-lançamentos" saiu da
+    tela em 2026-09-18 (não fazia sentido para o usuário); a preferência
+    continua no backend, sempre no padrão."""
     assert "Configurações" in HTML
     for id_ in ("aba-cfg-atualizacao", "aba-cfg-sobre", "painel-cfg-atualizacao",
-                "painel-cfg-sobre", "chk-upd-auto", "chk-upd-prerelease",
+                "painel-cfg-sobre", "chk-upd-auto",
                 "btn-upd-verificar", "btn-upd-reverter", "sobre-pasta", "sobre-vitrine"):
         assert f'id="{id_}"' in HTML, id_
-    assert "api.atualizacao_configurar(null, ev.target.checked)" in JS
+    assert "chk-upd-prerelease" not in HTML
     assert "function trocarAbaConfig" in JS

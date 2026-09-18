@@ -23,3 +23,4 @@
 # ⚠ Nao empurre linhas novas para a main entre criar a tag e o build terminar:
 # a CI zera o arquivo inteiro, e o que entrou nesse intervalo se perderia.
 - Botao Sincronizar saiu (a leitura do Gerenciador ja e automatica a cada 2 s). No lugar dele, embaixo dos ambientes, fica o Varredura, que procura as instancias no HD; o botao repetido do card Instancias no disco foi removido.
+- Configuracoes > Atualizacao: a opcao "Aceitar pre-lancamentos (beta, rc)" saiu da tela.
