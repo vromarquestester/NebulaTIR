@@ -67,6 +67,7 @@ class Execucao:
         # Testes locais: o config é o `config.json` da pasta do usuário e vai
         # para a execução como está (ver `preparacao.preparar_rotina`).
         self._config_literal = bool(config_literal)
+        self._thread_local = threading.local()
         self.instancias = max(1, int(instancias))
         # Em paralelo cada trabalhador tem o SEU ambiente (e o seu banco), e é
         # nele que a restauração acontece. Em sequencial, todos apontam para o
@@ -225,7 +226,14 @@ class Execucao:
             self._situacao[rotina].update(campos)
 
     def _emitir(self, texto: str, nivel: str = "INFO") -> None:
-        self._eventos.put({"kind": "log", "level": nivel, "text": texto})
+        # Cada slot roda na própria thread; o ambiente dela vai no evento
+        # para a tela separar o log por instância (abas, 2026-09-18). Linha
+        # emitida fora de um slot (fila, fases gerais) fica sem ambiente.
+        evento = {"kind": "log", "level": nivel, "text": texto}
+        ambiente = getattr(self._thread_local, "ambiente", "")
+        if ambiente:
+            evento["ambiente"] = ambiente
+        self._eventos.put(evento)
 
     # ── árvore de acompanhamento ──
     def _slot_assume(self, slot: int, rotina: str, casos: list) -> None:
@@ -313,6 +321,7 @@ class Execucao:
     def _rodar_uma(self, slot: int, rotina: dict, casos: list) -> None:
         nome = rotina["rotina"]
         ambiente = self.ambiente_do_slot(slot)
+        self._thread_local.ambiente = ambiente
         dividida = self._situacao[nome].get("dividida", False)
         rotulo = f"{nome}:{casos[0]}" if dividida and casos else nome
         self._anotar(nome, estado=RODANDO)

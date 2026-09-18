@@ -14,6 +14,7 @@ os botões, mas o backend não confia na UI.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
@@ -49,6 +50,11 @@ from services.preferencias import BASE_DIR, MODOS, Preferencias
 from webui import log_bridge
 
 log = logging.getLogger(__name__)
+
+# Chaves que, em testes locais, vêm do ambiente e não do `config.json` da
+# pasta: são as da execução (onde e como o navegador abre), não as do teste.
+# Fora da classe: o pywebview varre todo atributo público da Api.
+CHAVES_DO_AMBIENTE_NO_LOCAL = ("Url", "Headless")
 
 MOTIVO_OFFLINE = ("O Gerenciador de Ambientes precisa estar aberto. "
                   "O NebulaTIR usa as funções dele para trabalhar.")
@@ -724,8 +730,8 @@ class Api:
 
         # Divisão por caso: cada unidade vira um item da fila. Casos que
         # dependem uns dos outros ficam na mesma unidade, e portanto na mesma
-        # instância e na ordem do suite. Local roda inteiro, numa instância.
-        dividir = self._prefs.dividir_casos and not local
+        # instância e na ordem do suite.
+        dividir = self._prefs.dividir_casos
         for rotina in rotinas:
             grupos, analise = analise_casos.unidades(rotina, dividir)
             rotina["unidades"] = grupos
@@ -738,7 +744,11 @@ class Api:
             return ambiente_python
 
         if local:
-            config = config_local
+            # Regra de 2026-09-18: o `config.json` da pasta manda, e o
+            # ambiente sobrescreve só o que é da execução — `Url` (por
+            # instância, adiante) e `Headless`. Sem isso o "Sem tela" da
+            # configuração do ambiente era ignorado e o Firefox aparecia.
+            config = self._config_local_em_execucao(nome, config_local)
         else:
             config = self._config_do_ambiente(nome)
             erro = config_tir.validar(config)
@@ -791,11 +801,9 @@ class Api:
 
         ambientes_por_slot = [nome]
         config_por_ambiente = {}
-        paralelo = self._prefs.paralelo and not local
-        if local and self._prefs.paralelo:
-            self._fila.put({"kind": "log", "level": "INFO",
-                            "text": "Testes locais rodam em sequencial: o "
-                                    "config.json da pasta tem uma URL só."})
+        # Local também roda em paralelo (2026-09-18): a Url é trocada por
+        # instância do mesmo jeito que no catálogo.
+        paralelo = self._prefs.paralelo
         if not paralelo:
             # Sequencial também roda sob o AppServer do NebulaTIR: acabamos de
             # parar o do Gerenciador, então sem subir de volta não há ninguém
@@ -809,7 +817,7 @@ class Api:
                 return preparo
             ambientes_por_slot = preparo["ambientes"]
             config_por_ambiente = self._config_por_instancia(
-                config, ambientes_por_slot)
+                config, ambientes_por_slot, literal=local)
 
         # Restaurar entre rotinas é obrigatório, inclusive em paralelo: sem
         # isso a instância que liberar primeiro pega a base no estado que o
@@ -968,12 +976,16 @@ class Api:
         banco = (detalhes.get("banco") or {}) if detalhes.get("ok") else {}
         return tuple(banco.get(c, "") for c in campos)
 
-    def _config_por_instancia(self, base: dict, ambientes: list) -> dict:
+    def _config_por_instancia(self, base: dict, ambientes: list,
+                              literal: bool = False) -> dict:
         """Config do TIR de cada instância, com a Url da porta DELA.
 
         Sem isso os três navegadores abrem a mesma URL, e só a instância que
         ocupou aquela porta responde — foi o que aconteceu no primeiro teste
         real: três `config.json` apontando para 127.0.0.1:4321.
+
+        `literal` (testes locais): o `config.json` da pasta vai como está —
+        só a `Url` muda; nem `Environment` (é o da pasta) nem normalização.
         """
         por_ambiente = {}
         for ambiente in ambientes:
@@ -982,12 +994,28 @@ class Api:
             copia = dict(base)
             if porta:
                 copia["Url"] = f"http://127.0.0.1:{porta}/"
+            if literal:
+                por_ambiente[ambiente] = copia
+                continue
             detalhes = self._estado.detalhes_por_nome(ambiente)
             if detalhes.get("ok") and detalhes.get("ambiente_ini"):
                 # A seção do appserver.ini do clone pode diferir da do original.
                 copia["Environment"] = detalhes["ambiente_ini"]
             por_ambiente[ambiente] = config_tir.normalizar(copia)
         return por_ambiente
+
+    def _config_local_em_execucao(self, nome: str, config_local: dict) -> dict:
+        """`config.json` da pasta com `Url`/`Headless` do ambiente por cima."""
+        ambiente = self._config_do_ambiente(nome)
+        final = dict(config_local)
+        for chave in CHAVES_DO_AMBIENTE_NO_LOCAL:
+            # Chave grafada em outra caixa na pasta sairia duplicada.
+            for k in [k for k in final if str(k).casefold() == chave.casefold()
+                      and k != chave]:
+                final.pop(k)
+            if chave in ambiente:
+                final[chave] = ambiente[chave]
+        return final
 
     def _preparar_paralelos(self, nome: str) -> dict:
         """Sobe os ambientes da corrida e devolve a lista, o PAI incluído.
@@ -1747,11 +1775,30 @@ class Api:
         return config
 
     def obter_configuracao(self, nome: str) -> dict:
-        """Configuração do ambiente + o esquema que a UI usa para se montar."""
+        """Configuração do ambiente + o esquema que a UI usa para se montar.
+
+        Com a origem "Testes locais", o formulário edita o `config.json` da
+        pasta (é ele que manda na execução) — menos `Url` e `Headless`, que
+        continuam sendo do ambiente e são gravados nele. Decisão do usuário
+        em 2026-09-18: um lugar só para configurar, sem abrir o arquivo.
+        """
         if not self._importados.contem(nome):
             return {"ok": False, "erro": "Ambiente não está importado."}
-
         instalados = navegadores.listar()
+        local = self._config_local_para_edicao(nome)
+        if local.get("ok"):
+            campos = []
+            for campo in config_tir.CAMPOS:
+                campo = dict(campo)
+                if campo["chave"] == "Browser":
+                    campo["opcoes"] = instalados
+                if campo["chave"] in CHAVES_DO_AMBIENTE_NO_LOCAL:
+                    campo["origem"] = "ambiente"
+                campos.append(campo)
+            return {"ok": True, "nome": nome, "config": local["config"],
+                    "campos": campos, "divergencias": [],
+                    "local": {"caminho": local["caminho"]},
+                    "fontes": self._prefs.fontes}
         config = self._config_do_ambiente(nome)
 
         # Reconciliação com o Gerenciador: se a porta ou a seção do
@@ -1784,10 +1831,27 @@ class Api:
                 # config.json: a pasta de fontes é da máquina, não do TIR.
                 "fontes": self._prefs.fontes}
 
+    def _config_local_para_edicao(self, nome: str) -> dict:
+        """`config.json` da pasta com `Url`/`Headless` do ambiente por cima,
+        quando a origem é local e o arquivo é legível."""
+        if self._importados.origem_testes(nome) != ORIGEM_LOCAL:
+            return {"ok": False}
+        varredura = self._escanear_local(nome)
+        if not varredura.get("ok"):
+            return {"ok": False, "erro": varredura.get("erro", "")}
+        arquivo = varredura["config"]
+        if not arquivo["existe"] or arquivo["erro"]:
+            return {"ok": False, "erro": arquivo["erro"] or "sem config.json"}
+        return {"ok": True, "caminho": arquivo["caminho"],
+                "config": self._config_local_em_execucao(nome, arquivo["conteudo"])}
+
     def salvar_configuracao(self, nome: str, config: dict) -> dict:
         """Normaliza (aplicando travas) e persiste. A UI não é fonte de verdade."""
         if not self._importados.contem(nome):
             return {"ok": False, "erro": "Ambiente não está importado."}
+        local = self._config_local_para_edicao(nome)
+        if local.get("ok"):
+            return self._salvar_configuracao_local(nome, local["caminho"], config)
         base = self._config_do_ambiente(nome)
         novo = config_tir.normalizar(config, base=base)
         erro = config_tir.validar(novo)
@@ -1800,6 +1864,40 @@ class Api:
         if resultado.get("ok"):
             resultado["config"] = novo
         return resultado
+
+    def _salvar_configuracao_local(self, nome: str, caminho: str,
+                                   config: dict) -> dict:
+        """Divide o formulário: `Url`/`Headless` vão para o ambiente; o resto
+        para o `config.json` da pasta, mantendo as chaves que o formulário não
+        conhece (o arquivo é do usuário)."""
+        do_ambiente = {k: v for k, v in (config or {}).items()
+                       if k in CHAVES_DO_AMBIENTE_NO_LOCAL}
+        if do_ambiente:
+            base = self._config_do_ambiente(nome)
+            novo = config_tir.normalizar({**base, **do_ambiente}, base=base)
+            gravado = self._importados.salvar_configuracao(nome, novo, idioma_manual=True)
+            if not gravado.get("ok"):
+                return gravado
+
+        atual, erro = testes_locais.ler_config(caminho)
+        if atual is None:
+            return {"ok": False, "erro": erro}
+        for chave, valor in (config or {}).items():
+            if chave in CHAVES_DO_AMBIENTE_NO_LOCAL:
+                continue
+            for k in [k for k in atual if str(k).casefold() == chave.casefold()
+                      and k != chave]:
+                atual.pop(k)
+            atual[chave] = valor
+        try:
+            Path(caminho).write_text(
+                json.dumps(atual, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8")
+        except OSError as e:
+            return {"ok": False, "erro": f"Não foi possível gravar {caminho}: {e}"}
+        log.info("[LOCAL] %s gravado pela tela.", caminho)
+        return {"ok": True, "config": self._config_local_em_execucao(nome, atual),
+                "local": {"caminho": caminho}}
 
     def escolher_pasta(self, inicial: str = "") -> dict:
         """Diálogo nativo de pasta, para o campo `LogFolder`."""

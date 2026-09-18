@@ -1412,26 +1412,93 @@ function abrirLog(abrir) {
   $('#btn-log-toggle').setAttribute('aria-expanded', String(abrir));
   // "Fixar" só faz sentido com o painel aberto.
   $('#campo-fixar').hidden = !abrir;
-  if (abrir && $('#chk-autoscroll').checked) {
-    const consoleEl = $('#console');
-    consoleEl.scrollTop = consoleEl.scrollHeight;
-  }
+  if (abrir) rolarLogAtivo();
 }
 
 function logAberto() {
   return $('#panel-log').dataset.aberto === 'true';
 }
 
+/* ── Log por ambiente ──────────────────────────────────── */
+
+/* Linha com `ambiente` vai para a aba daquela instância (criada na hora);
+   sem ambiente, para a "Geral". A barra de abas só aparece com mais de uma. */
+function consoleDe(ambiente) {
+  const nome = ambiente || '';
+  let painel = $$('#log-paineis .console').find(c => c.dataset.ambiente === nome);
+  if (painel) return painel;
+  painel = document.createElement('div');
+  painel.className = 'console';
+  painel.dataset.ambiente = nome;
+  painel.id = 'console-' + nome.replace(/[^A-Za-z0-9_-]/g, '_');
+  painel.setAttribute('role', 'log');
+  painel.setAttribute('aria-label', 'Log de ' + nome);
+  painel.hidden = true;
+  $('#log-paineis').appendChild(painel);
+
+  const aba = document.createElement('button');
+  aba.type = 'button';
+  aba.className = 'aba';
+  aba.setAttribute('role', 'tab');
+  aba.setAttribute('aria-selected', 'false');
+  aba.setAttribute('aria-controls', painel.id);
+  aba.dataset.ambiente = nome;
+  aba.textContent = nome;
+  aba.addEventListener('click', () => trocarAbaLog(nome));
+  $('#log-abas').appendChild(aba);
+  $('#log-abas').hidden = false;
+  return painel;
+}
+
+function abaLogAtiva() {
+  const aba = $$('#log-abas .aba').find(a => a.getAttribute('aria-selected') === 'true');
+  return aba ? aba.dataset.ambiente : '';
+}
+
+function trocarAbaLog(ambiente) {
+  for (const aba of $$('#log-abas .aba')) {
+    const ativa = aba.dataset.ambiente === ambiente;
+    aba.setAttribute('aria-selected', String(ativa));
+    if (ativa) delete aba.dataset.nivel;      // vista: apaga o sinal de aviso
+  }
+  for (const painel of $$('#log-paineis .console')) {
+    painel.hidden = painel.dataset.ambiente !== ambiente;
+  }
+  rolarLogAtivo();
+}
+
+function rolarLogAtivo() {
+  if (!logAberto() || !$('#chk-autoscroll').checked) return;
+  const painel = $$('#log-paineis .console').find(c => !c.hidden);
+  if (painel) painel.scrollTop = painel.scrollHeight;
+}
+
+function limparLog() {
+  for (const painel of $$('#log-paineis .console')) {
+    if (painel.dataset.ambiente) painel.remove(); else painel.innerHTML = '';
+  }
+  for (const aba of $$('#log-abas .aba')) {
+    if (aba.dataset.ambiente) aba.remove();
+  }
+  trocarAbaLog('');
+  $('#log-abas').hidden = true;
+}
+
 function escreverLinha(ev) {
-  const consoleEl = $('#console');
+  const consoleEl = consoleDe(ev.ambiente);
   const linha = document.createElement('span');
   linha.className = 'l l-' + ev.level;
   linha.textContent = ev.text;
   consoleEl.appendChild(linha);
   while (consoleEl.childElementCount > MAX_LINHAS) consoleEl.firstElementChild.remove();
+  // Aviso ou erro numa aba que não está à vista: marca a aba.
+  if (consoleEl.hidden && (ev.level === 'WARNING' || ev.level === 'ERROR')) {
+    const aba = $$('#log-abas .aba').find(a => a.dataset.ambiente === (ev.ambiente || ''));
+    if (aba && aba.dataset.nivel !== 'ERROR') aba.dataset.nivel = ev.level;
+  }
   // Contraído, o console tem altura zero e a rolagem não teria efeito — ela é
   // reposta ao abrir.
-  if (logAberto() && $('#chk-autoscroll').checked) {
+  if (!consoleEl.hidden && logAberto() && $('#chk-autoscroll').checked) {
     consoleEl.scrollTop = consoleEl.scrollHeight;
   }
 }
@@ -1621,6 +1688,10 @@ async function abrirConfiguracao() {
   state.configCampos = r.campos;
   state.configAtual = r.config;
   $('#config-ambiente').textContent = r.nome;
+  const local = r.local || null;
+  $('#config-local-aviso').hidden = !local;
+  $('#config-hint-padrao').hidden = !!local;
+  if (local) $('#config-local-caminho').textContent = local.caminho;
   montarFormulario(r.campos, r.config);
   renderDivergencias(r.divergencias);
   renderFontes(r.fontes);
@@ -1666,6 +1737,7 @@ function montarFormulario(campos, config) {
 function construirCampo(campo, valor) {
   const caixa = document.createElement('div');
   caixa.className = 'campo';
+  if (campo.origem) caixa.dataset.origem = campo.origem;
   const id = 'cfg-' + campo.chave;
 
   if (campo.largo) caixa.classList.add('campo-largo');
@@ -1980,7 +2052,8 @@ function ligarEventos() {
   $('#btn-confirmar-excluir').addEventListener('click', confirmarExcluir);
 
 
-  $('#btn-limpar-log').addEventListener('click', () => { $('#console').innerHTML = ''; });
+  $('#btn-limpar-log').addEventListener('click', limparLog);
+  $('#aba-log-geral').addEventListener('click', () => trocarAbaLog(''));
   $('#btn-diagnostico').addEventListener('click', gerarDiagnostico);
 
   // ── Log: abrir, fechar e fixar ──

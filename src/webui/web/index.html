@@ -476,7 +476,17 @@
         <button type="button" class="btn btn-sm btn-ghost" id="btn-limpar-log">Limpar</button>
       </div>
     </div>
-    <div class="console" id="console" role="log" aria-live="polite" aria-label="Log do NebulaTIR"></div>
+    <!-- Abas por instância (2026-09-18): "Geral" leva as fases e avisos da
+         corrida; cada ambiente que executa ganha a própria aba com as linhas
+         do lançador dele. A barra só aparece quando há mais de uma. Expandir,
+         contrair, fixar e rolagem não mudam. -->
+    <div class="abas abas-log" id="log-abas" role="tablist" aria-label="Log por ambiente" hidden>
+      <button type="button" class="aba" id="aba-log-geral" role="tab"
+              aria-selected="true" aria-controls="console" data-ambiente="">Geral</button>
+    </div>
+    <div class="log-paineis" id="log-paineis">
+      <div class="console" id="console" role="log" aria-live="polite" aria-label="Log do NebulaTIR" data-ambiente=""></div>
+    </div>
   </section>
 
   <!-- ───────────── Modal: importar ambiente ───────────── -->
@@ -537,10 +547,21 @@
         <button type="button" class="icon-btn" id="btn-fechar-config" aria-label="Fechar">✕</button>
       </div>
       <div class="modal-body">
-        <p class="hint">
+        <p class="hint" id="config-hint-padrao">
           Gera o <code class="mono">config.json</code> da execução. Os nomes dos
           campos aqui são em português; no arquivo, as chaves do TIR são mantidas.
         </p>
+        <!-- Origem "Testes locais": o arquivo da pasta é a verdade; URL e
+             Sem tela são do ambiente (2026-09-18). -->
+        <div class="aviso-divergencia" id="config-local-aviso" hidden>
+          <p class="aviso-titulo">Testes locais: editando o config.json da pasta</p>
+          <p class="mono" id="config-local-caminho"></p>
+          <p class="hint">
+            É esse arquivo que vale na execução. <strong>URL</strong> e
+            <strong>Sem tela</strong> são do ambiente e ficam gravados nele —
+            a URL ainda é trocada por instância no paralelo.
+          </p>
+        </div>
 
         <!-- Divergência com o Gerenciador: nunca sobrescreve calado. -->
         <div class="aviso-divergencia" id="config-divergencia" hidden>

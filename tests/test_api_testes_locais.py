@@ -273,20 +273,40 @@ def test_executar_local_usa_o_config_da_pasta_como_esta(pronto_para_rodar):
     assert kwargs["rotinas"][0]["suite"].endswith("MATA010TESTSUITE.py")
 
 
-def test_executar_local_e_sempre_sequencial(pronto_para_rodar):
+def test_executar_local_roda_em_paralelo_com_a_url_de_cada_instancia(
+        pronto_para_rodar, monkeypatch):
+    """Regra de 2026-09-18: local também roda em paralelo e divide casos.
+    O config da pasta vai literal para cada instância — só a Url muda."""
     api = pronto_para_rodar
-    api._prefs.salvar({"paralelo": True, "max_instancias": 3,
+    api._prefs.salvar({"modo": "paralelo", "max_instancias": 2,
                        "dividir_casos": True})
     api.salvar_selecao_local("PAR_2510", ["MATA010", "FINA050"])
+    monkeypatch.setattr(api, "_preparar_paralelos",
+                        lambda nome: {"ok": True, "ambientes": ["PAR_2510", "PAR_2510_TIR1"]})
     r = api.executar_tir("PAR_2510")
     assert r["ok"] is True, r
-    assert r["instancias"] == 1
     kwargs = _CorridaFalsa.ultima
-    assert kwargs["instancias"] == 1
-    assert kwargs["ambientes_por_slot"] == ["PAR_2510"]
-    assert kwargs["config_por_ambiente"] == {}
-    # Sem divisão de casos: cada rotina é uma unidade só.
-    assert all(len(x["unidades"]) == 1 for x in kwargs["rotinas"])
+    assert kwargs["instancias"] == 2
+    assert kwargs["ambientes_por_slot"] == ["PAR_2510", "PAR_2510_TIR1"]
+    assert kwargs["config_literal"] is True
+    cfg = kwargs["config_por_ambiente"]["PAR_2510"]
+    assert cfg["Url"] == "http://127.0.0.1:4321/"
+    # Literal: POUILogin desligado e Chrome continuam; nada normalizado.
+    assert cfg["POUILogin"] is False and cfg["Browser"] == "Chrome"
+    assert cfg["Environment"] == "PAR_2510"
+    # (A divisão em si depende do TESTCASE real — coberta em test_analise_casos.)
+
+
+def test_executar_local_headless_vem_do_ambiente(pronto_para_rodar):
+    """O "Sem tela" da configuração do ambiente é o que vale — a pasta tinha
+    Headless ausente/false e o Firefox aparecia (2026-09-18)."""
+    api = pronto_para_rodar
+    api._importados.salvar_configuracao(
+        "PAR_2510", {**api._config_do_ambiente("PAR_2510"), "Headless": True})
+    r = api.executar_tir("PAR_2510")
+    assert r["ok"] is True, r
+    assert _CorridaFalsa.ultima["config"]["Headless"] is True
+    assert _CorridaFalsa.ultima["config"]["TimeOut"] == 45     # o resto é da pasta
 
 
 def test_executar_local_exige_url_no_config(pronto_para_rodar, pasta_local):
@@ -323,3 +343,34 @@ def test_executar_pelos_fontes_continua_normalizando(pronto_para_rodar, tmp_path
     kwargs = _CorridaFalsa.ultima
     assert kwargs["config_literal"] is False
     assert kwargs["config"]["POUILogin"] is True
+
+
+# ── Configuração pela tela, com origem local ────────────────
+
+def test_obter_configuracao_local_mostra_o_config_da_pasta(pronto_para_rodar, pasta_local):
+    api = pronto_para_rodar
+    r = api.obter_configuracao("PAR_2510")
+    assert r["ok"] is True
+    assert r["local"]["caminho"].endswith("config.json")
+    assert r["config"]["TimeOut"] == 45 and r["config"]["Browser"] == "Chrome"
+    origens = {c["chave"]: c.get("origem") for c in r["campos"]}
+    assert origens["Url"] == "ambiente" and origens["Headless"] == "ambiente"
+    assert origens["TimeOut"] is None
+
+
+def test_salvar_configuracao_local_divide_entre_pasta_e_ambiente(pronto_para_rodar, pasta_local):
+    api = pronto_para_rodar
+    atual = api.obter_configuracao("PAR_2510")["config"]
+    r = api.salvar_configuracao("PAR_2510", {**atual, "TimeOut": 90, "Headless": True,
+                                             "Browser": "Firefox"})
+    assert r["ok"] is True, r
+    gravado = json.loads((pasta_local / "config.json").read_text(encoding="utf-8"))
+    assert gravado["TimeOut"] == 90 and gravado["Browser"] == "Firefox"
+    assert gravado["POUILogin"] is False           # chave da pasta preservada
+    assert api._config_do_ambiente("PAR_2510")["Headless"] is True
+
+
+def test_configuracao_com_origem_fontes_nao_muda(api, pasta_local):
+    api.salvar_pasta_local("PAR_2510", str(pasta_local))
+    r = api.obter_configuracao("PAR_2510")
+    assert "local" not in r

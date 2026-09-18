@@ -1219,6 +1219,28 @@ body.sem-link .chip-link { animation: halo 2400ms var(--ease-out) infinite; }
 .switch { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: 11.5px; color: hsl(var(--fg-muted)); }
 .switch input { accent-color: hsl(var(--primary)); width: 16px; height: 16px; }
 
+/* Abas do log: mesma régua das abas do painel central, sem a folga embaixo. */
+.abas-log { margin: 0 var(--sp-3); margin-bottom: 0; flex: none; }
+.abas-log .aba { padding: var(--sp-1) var(--sp-3); font-size: 12px; }
+.abas-log .aba[data-nivel="WARNING"]::after,
+.abas-log .aba[data-nivel="ERROR"]::after {
+  content: "";
+  width: 6px; height: 6px; border-radius: 50%;
+  background: hsl(var(--warn));
+}
+.abas-log .aba[data-nivel="ERROR"]::after { background: hsl(var(--danger)); }
+.panel-log[data-aberto="false"] .abas-log,
+.panel-log[data-aberto="false"] .log-paineis { display: none; }
+.log-paineis { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.log-paineis .console[hidden] { display: none; }
+.campo[data-origem="ambiente"] > label::after,
+.campo[data-origem="ambiente"] .switch-campo > span:first-child::after {
+  content: " · do ambiente";
+  color: hsl(var(--fg-faint));
+  font-weight: 400;
+  font-size: 11px;
+}
+
 .console {
   flex: 1;
   min-height: 0;

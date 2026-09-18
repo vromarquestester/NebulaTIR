@@ -29,3 +29,6 @@
 - Portas por instancia: a instancia recem-gerada deixa de ficar em amarelo (o slot do clone estava trocado com o do ambiente-pai).
 - Excluir instancia paralela apaga tambem a pasta em NebulaInstancia que o Gerenciador deixava para tras; sem isso o proximo Gerar paralelos falhava com "Pasta destino ja existe". A mensagem de erro da clonagem passa a trazer o motivo real do Gerenciador.
 - O debug-*.log recomeca a cada abertura do programa.
+- Testes locais rodam em paralelo e dividem casos como o catalogo. O config.json da pasta continua mandando, mas URL (por instancia) e Sem tela vem da configuracao do ambiente - antes o Sem tela era ignorado e o Firefox aparecia.
+- Com a origem Testes locais, o botao Configuracao edita o config.json da pasta (URL e Sem tela ficam no ambiente).
+- Log com abas por ambiente: Geral mais uma aba por instancia da corrida; aba fora de vista ganha um ponto quando recebe aviso ou erro.

@@ -749,3 +749,24 @@ def test_caso_preso_em_rodando_vira_falha_no_mapa(cenario, tmp_path):
     corrida, _ = _rodar([rotina])
 
     assert corrida.instantaneo()["rotinas"][0]["resultados"]["test_1"] == "erro"
+
+
+def test_eventos_do_slot_levam_o_ambiente(cenario, tmp_path):
+    """A tela separa o log em abas por instância (2026-09-18): toda linha
+    emitida de dentro de um slot diz de qual ambiente veio; as gerais, não."""
+    eventos = queue.Queue()
+    corrida = execucao.Execucao(
+        ambiente="AMB", rotinas=[_rotina(tmp_path, "R1"), _rotina(tmp_path, "R2")],
+        config=_config(), estado_gerenciador=GerenciadorFalso(),
+        fila_eventos=eventos, instancias=2,
+        ambientes_por_slot=["AMB_TIR1", "AMB_TIR2"])
+    corrida.iniciar()
+    for t in corrida._threads:
+        t.join(timeout=60)
+    logs = []
+    while not eventos.empty():
+        ev = eventos.get_nowait()
+        if ev.get("kind") == "log":
+            logs.append(ev)
+    com_ambiente = {ev.get("ambiente") for ev in logs if ev.get("ambiente")}
+    assert com_ambiente <= {"AMB_TIR1", "AMB_TIR2"} and com_ambiente
