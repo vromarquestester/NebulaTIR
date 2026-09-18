@@ -27,3 +27,5 @@
 - Configuracoes ficou mais larga e em duas colunas: versao e automatico a esquerda, o que mudou e outras ferramentas a direita.
 - Gerar paralelos com o ambiente no ar: avisa que precisa para-lo para clonar e so para com a sua confirmacao. Ele fica parado depois; o Executar TIR sobe de volta como instancia 1.
 - Portas por instancia: a instancia recem-gerada deixa de ficar em amarelo (o slot do clone estava trocado com o do ambiente-pai).
+- Excluir instancia paralela apaga tambem a pasta em NebulaInstancia que o Gerenciador deixava para tras; sem isso o proximo Gerar paralelos falhava com "Pasta destino ja existe". A mensagem de erro da clonagem passa a trazer o motivo real do Gerenciador.
+- O debug-*.log recomeca a cada abertura do programa.

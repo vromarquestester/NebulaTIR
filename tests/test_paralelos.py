@@ -37,7 +37,10 @@ class GerenciadorFalso:
         return {"ok": True}
 
     def atualizar(self):
-        return {"online": True}
+        # O que o Gerenciador conta do último pipeline, como no status real.
+        return {"online": True,
+                "andamento": {"erros": ["Pasta destino já existe: C:/T/A_TIR1"]}
+                if self.nao_aparece else {}}
 
     def banco_por_nome(self, nome):
         return {"ambiente": nome} if nome in self._criados else None
@@ -191,7 +194,8 @@ def test_ambiente_que_nao_aparece_e_erro(reg):
                         estado_gerenciador=ger, registro=reg,
                         plano_portas=_plano(2))
     assert r["criados"] == []
-    assert "não apareceu" in r["erros"][0]["erro"]
+    # O motivo real vem do `andamento` do Gerenciador, não um "veja o log".
+    assert "Pasta destino já existe" in r["erros"][0]["erro"]
     assert reg.nomes("A") == []         # não registrou o que não existe
 
 

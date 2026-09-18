@@ -1434,6 +1434,14 @@ class Api:
                 continue
 
             preparacao.limpar_ambiente(ambiente)   # pasta tests\<ambiente>
+            # O Gerenciador (até a 2.10.0) apaga `<base>\<ambiente>`, e o
+            # clone mora em `<base>\NebulaInstancia\<ambiente>`: a pasta
+            # sobrava, e o próximo Gerar paralelos parava em "Pasta destino
+            # já existe" (2026-09-18). O registro sabe onde ela está.
+            sobra = self._apagar_pasta_da_instancia(ambiente)
+            if sobra.get("erro"):
+                erros.append({"ambiente": ambiente, "erro": sobra["erro"]})
+                continue
             log.warning("[PARALELO] %s removido por completo.", ambiente)
             self._concluir_um(ambiente, removidos)
 
@@ -1445,6 +1453,19 @@ class Api:
             "text": f"Exclusão concluída: {len(removidos)} removido(s)"
                     + (f", {len(erros)} com erro" if erros else "") + ".",
         })
+
+    def _apagar_pasta_da_instancia(self, ambiente: str) -> dict:
+        """Apaga a pasta da instância se o Gerenciador a deixou para trás."""
+        item = self._instancias.por_nome(ambiente) or {}
+        pasta = item.get("pasta") or ""
+        if not pasta or not Path(pasta).exists():
+            return {"ok": True}
+        r = limpeza.apagar_pasta(pasta)
+        if r.get("apagado"):
+            self._fila.put({"kind": "log", "level": "INFO",
+                            "text": f"{ambiente}: pasta {pasta} apagada (o "
+                                    f"Gerenciador não a alcança)."})
+        return r
 
     def _concluir_um(self, ambiente: str, removidos: list) -> None:
         """Tira do registro assim que termina, para a lista encolher na tela

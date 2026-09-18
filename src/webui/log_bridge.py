@@ -129,8 +129,11 @@ def instalar_debug() -> logging.Handler | None:
         pasta = pasta_de_log()
         pasta.mkdir(parents=True, exist_ok=True)
         hoje = datetime.date.today().strftime("%Y%m%d")
+        # `mode="w"`: o arquivo recomeça a cada abertura do programa. Ele
+        # existe para o diagnóstico da sessão atual; execuções velhas só
+        # confundiam a leitura (pedido do usuário, 2026-09-18).
         handler = logging.FileHandler(pasta / f"{PREFIXO_DEBUG}-{hoje}.log",
-                                      encoding="utf-8")
+                                      mode="w", encoding="utf-8")
     except OSError:
         return None
 

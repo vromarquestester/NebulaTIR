@@ -137,11 +137,16 @@ def gerar(*, origem: str, banco_origem: str, quantidade: int,
 
         # `ok` da thread não é garantia: a clonagem pode ter falhado no meio.
         # O ambiente aparecer no Gerenciador é a prova.
-        estado_gerenciador.atualizar()
+        estado = estado_gerenciador.atualizar()
         if estado_gerenciador.banco_por_nome(ambiente) is None:
+            # O Gerenciador conta o que deu errado no `andamento` do status
+            # (ex.: "Pasta destino já existe"). Sem isso o usuário lia "não
+            # apareceu" e tinha que abrir o log de lá (2026-09-18).
+            motivos = (estado.get("andamento") or {}).get("erros") or []
+            detalhe = "; ".join(str(m) for m in motivos if m) or \
+                "Veja o log do Gerenciador."
             erros.append({"ambiente": ambiente,
-                          "erro": "A clonagem terminou, mas o ambiente não "
-                                  "apareceu no Gerenciador. Veja o log dele."})
+                          "erro": f"A clonagem falhou no Gerenciador: {detalhe}"})
             break
 
         registro.registrar(ambiente=ambiente, origem=origem, slot=slot,

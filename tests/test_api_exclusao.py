@@ -108,3 +108,24 @@ def test_executar_tir_bloqueado_durante_a_exclusao(api, monkeypatch):
 def test_nada_selecionado_nao_inicia(api):
     assert api.excluir_paralelos([])["ok"] is False
     assert api.estado_exclusao()["ativa"] is False
+
+
+def test_exclusao_apaga_a_pasta_que_o_gerenciador_deixou(api, tmp_path, monkeypatch):
+    """Caso real de 2026-09-18: o Gerenciador apaga <base>/<ambiente>, mas o
+    clone mora em <base>/NebulaInstancia/<ambiente>. A pasta sobrava e o
+    próximo Gerar paralelos parava em "Pasta destino já existe"."""
+    pasta = tmp_path / "NebulaInstancia" / "PAR_2510_TIR1"
+    (pasta / "Protheus").mkdir(parents=True)
+    api._instancias.anotar_caminhos("PAR_2510_TIR1", {"pasta": str(pasta)})
+
+    monkeypatch.setattr(api._estado, "indice_por_nome", lambda nome: 4)
+    monkeypatch.setattr(api._estado, "remover_ambiente", lambda nome: {"ok": True})
+    monkeypatch.setattr(api._estado, "esperar_ocioso", lambda **k: {"ok": True})
+    monkeypatch.setattr(api._estado, "atualizar", lambda: {"online": True})
+    monkeypatch.setattr(api._estado, "banco_por_nome", lambda nome: None)
+
+    r = api.excluir_paralelos(["PAR_2510_TIR1"])
+    assert r["ok"] and _esperar_fim(api)
+    estado = api.estado_exclusao()
+    assert estado["erros"] == [] and estado["removidos"] == ["PAR_2510_TIR1"]
+    assert not pasta.exists()
