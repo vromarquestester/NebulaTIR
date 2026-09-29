@@ -24,7 +24,7 @@ def solta_a_trava():
 
 @so_windows
 def test_primeiro_adquire_e_o_mesmo_processo_nao_conta_duas_vezes():
-    nome = f"NebulaTIR-teste-{os.getpid()}"
+    nome = f"GerenciadorAmbientes-teste-{os.getpid()}"
     assert instancia_unica.adquirir(nome) is True
     # Mesmo nome, mesmo processo: é a mesma trava, não uma segunda instância.
     assert instancia_unica.adquirir(nome) is True
@@ -32,7 +32,7 @@ def test_primeiro_adquire_e_o_mesmo_processo_nao_conta_duas_vezes():
 
 @so_windows
 def test_outro_processo_com_a_trava_bloqueia():
-    nome = f"NebulaTIR-teste-{os.getpid()}-outro"
+    nome = f"GerenciadorAmbientes-teste-{os.getpid()}-outro"
     codigo = (
         "import sys, time; sys.path.insert(0, sys.argv[1]);"
         "from services import instancia_unica as u;"
@@ -56,7 +56,7 @@ def test_outro_processo_com_a_trava_bloqueia():
 
 @so_windows
 def test_relancamento_espera_o_pai_soltar():
-    nome = f"NebulaTIR-teste-{os.getpid()}-relanca"
+    nome = f"GerenciadorAmbientes-teste-{os.getpid()}-relanca"
     codigo = (
         "import sys, time; sys.path.insert(0, sys.argv[1]);"
         "from services import instancia_unica as u;"
@@ -89,12 +89,12 @@ def test_janela_inexistente_nao_e_trazida():
 @so_windows
 def test_garantir_libera_quando_ninguem_tem_a_trava(monkeypatch):
     monkeypatch.setattr(instancia_unica, "e_relancamento", lambda ambiente=None: False)
-    assert instancia_unica.garantir(f"NebulaTIR-teste-{os.getpid()}-g", "x") is True
+    assert instancia_unica.garantir(f"GerenciadorAmbientes-teste-{os.getpid()}-g", "x") is True
 
 
 @so_windows
 def test_garantir_com_outro_dono_traz_a_janela_e_nao_avisa(monkeypatch):
-    nome = f"NebulaTIR-teste-{os.getpid()}-g2"
+    nome = f"GerenciadorAmbientes-teste-{os.getpid()}-g2"
     monkeypatch.setattr(instancia_unica, "adquirir", lambda n, e=0.0: False)
     trazidas, avisos = [], []
     monkeypatch.setattr(instancia_unica, "trazer_para_frente",
@@ -106,13 +106,48 @@ def test_garantir_com_outro_dono_traz_a_janela_e_nao_avisa(monkeypatch):
 
 
 @so_windows
-def test_garantir_sem_janela_achada_avisa(monkeypatch):
-    monkeypatch.setattr(instancia_unica, "adquirir", lambda n, e=0.0: False)
+def test_garantir_sem_janela_achada_espera_e_so_depois_avisa(monkeypatch):
+    esperas = []
+    monkeypatch.setattr(instancia_unica, "e_relancamento", lambda ambiente=None: False)
+    monkeypatch.setattr(instancia_unica, "adquirir",
+                        lambda n, e=0.0: esperas.append(e) and False)
     monkeypatch.setattr(instancia_unica, "trazer_para_frente", lambda titulo: False)
     avisos = []
     monkeypatch.setattr(instancia_unica, "_avisar", lambda titulo: avisos.append(titulo))
     assert instancia_unica.garantir("x", "NebulaTIR") is False
+    assert esperas == [0.0, instancia_unica.ESPERA_RELANCAMENTO_SEG]
     assert avisos == ["NebulaTIR"]
+
+
+@so_windows
+def test_reiniciar_agora_sem_marca_espera_o_pai_sem_janela():
+    """Regressão 2026-09-29 (v2.11.0 -> v2.12.0): o bootloader do PyInstaller
+    apaga `PYINSTALLER_RESET_ENVIRONMENT`, o relançado não se via como
+    relançamento e mostrava "já está aberto" ao pai que ainda terminava."""
+    nome = f"GerenciadorAmbientes-teste-{os.getpid()}-sem-marca"
+    codigo = (
+        "import sys, time; sys.path.insert(0, sys.argv[1]);"
+        "from services import instancia_unica as u;"
+        f"print(u.adquirir({nome!r}), flush=True); time.sleep(1.0)"
+    )
+    src = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
+    pai = subprocess.Popen([sys.executable, "-c", codigo, src],
+                           stdout=subprocess.PIPE, text=True)
+    avisos = []
+    try:
+        assert pai.stdout.readline().strip() == "True"
+        # Título que não existe: o pai já fechou a janela.
+        mp = pytest.MonkeyPatch()
+        mp.setattr(instancia_unica, "e_relancamento", lambda ambiente=None: False)
+        mp.setattr(instancia_unica, "_avisar", lambda titulo: avisos.append(titulo))
+        try:
+            assert instancia_unica.garantir(nome, f"sem-janela-{os.getpid()}") is True
+        finally:
+            mp.undo()
+    finally:
+        pai.kill()
+        pai.wait()
+    assert avisos == []
 
 
 @so_windows

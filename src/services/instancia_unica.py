@@ -13,8 +13,12 @@ sem permissão para o namespace global (raro fora de serviço), cai em
 
 **Relançamento não é segunda instância.** O atualizador (`atualizacao.py`)
 sobe o executável novo e deixa este terminar; por alguns instantes os dois
-existem. O filho recebe `PYINSTALLER_RESET_ENVIRONMENT` no ambiente, e é por
-essa marca que ele espera a trava do pai soltar em vez de desistir.
+existem. O filho recebe `PYINSTALLER_RESET_ENVIRONMENT` no ambiente, mas o
+bootloader do PyInstaller 6.22 **apaga** a variável antes do Python rodar —
+a marca nunca chega (sonda de 2026-09-29), e o relançado dizia "já está
+aberto" ao pai que ainda terminava. O sinal que vale é outro: o pai já fechou
+a janela. Trava com dono e **sem janela visível** é processo saindo (ou ainda
+abrindo), e aí se espera a trava soltar em vez de desistir.
 
 Cópia idêntica em todas as ferramentas da família (Gerenciador de Ambientes,
 NebulaTIR). Programa novo copia o módulo, não reescreve.
@@ -185,7 +189,13 @@ def garantir(nome: str, titulo: str) -> bool:
     espera = ESPERA_RELANCAMENTO_SEG if e_relancamento() else 0.0
     if adquirir(nome, espera):
         return True
-    log.info("[UNICA] %s já está aberto; trazendo a janela para a frente.", nome)
+    if trazer_para_frente(titulo):
+        log.info("[UNICA] %s já está aberto; janela trazida para a frente.", nome)
+        return False
+    # Dono sem janela: o "Reiniciar agora" relançou e o pai está terminando.
+    log.info("[UNICA] trava de %s com dono sem janela; aguardando soltar.", nome)
+    if adquirir(nome, ESPERA_RELANCAMENTO_SEG):
+        return True
     if not trazer_para_frente(titulo):
         _avisar(titulo)
     return False
